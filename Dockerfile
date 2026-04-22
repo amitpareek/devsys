@@ -76,15 +76,16 @@ RUN mkdir -p /etc/apt/keyrings /usr/share/keyrings \
       tailscale eza gh glow \
  && rm -rf /var/lib/apt/lists/*
 
-# ---- Starship, flyctl (system-wide), lazygit, obsidian-export --------------
+# ---- Starship, flyctl (system-wide), lazygit -------------------------------
 RUN curl -fsSL https://starship.rs/install.sh | sh -s -- --yes --bin-dir /usr/local/bin \
- && curl -fsSL https://fly.io/install.sh | FLYCTL_INSTALL=/opt/fly sh \
+ && HOME=/root curl -fsSL https://fly.io/install.sh | FLYCTL_INSTALL=/opt/fly HOME=/root sh \
  && ln -sf /opt/fly/bin/flyctl /usr/local/bin/flyctl \
  && ln -sf /opt/fly/bin/flyctl /usr/local/bin/fly \
+ && rm -rf /root/.fly \
  && ARCH=$(dpkg --print-architecture) \
  && case "$ARCH" in \
-      arm64) LG_ARCH=arm64;  OE_ARCH=aarch64-unknown-linux-gnu ;; \
-      amd64) LG_ARCH=x86_64; OE_ARCH=x86_64-unknown-linux-gnu  ;; \
+      arm64) LG_ARCH=arm64  ;; \
+      amd64) LG_ARCH=x86_64 ;; \
       *) echo "unsupported arch: $ARCH" >&2; exit 1 ;; \
     esac \
  && LG_VERSION=$(curl -fsSL https://api.github.com/repos/jesseduffield/lazygit/releases/latest \
@@ -93,16 +94,7 @@ RUN curl -fsSL https://starship.rs/install.sh | sh -s -- --yes --bin-dir /usr/lo
       "https://github.com/jesseduffield/lazygit/releases/latest/download/lazygit_${LG_VERSION}_Linux_${LG_ARCH}.tar.gz" \
  && tar -xzf /tmp/lazygit.tgz -C /tmp lazygit \
  && install /tmp/lazygit /usr/local/bin/lazygit \
- && rm -f /tmp/lazygit /tmp/lazygit.tgz \
- && OE_URL=$(curl -fsSL https://api.github.com/repos/zoni/obsidian-export/releases/latest \
-      | grep -oE '"browser_download_url":[^,]*'"$OE_ARCH"'[^,]*\.tar\.xz"' \
-      | head -n1 | cut -d'"' -f4) \
- && if [ -n "$OE_URL" ]; then \
-      curl -fsSL -o /tmp/oe.tar.xz "$OE_URL" \
-      && tar -xJf /tmp/oe.tar.xz -C /tmp \
-      && install "$(find /tmp -maxdepth 2 -type f -name obsidian-export | head -n1)" /usr/local/bin/obsidian-export \
-      && rm -rf /tmp/oe.tar.xz /tmp/obsidian-export-*; \
-    fi
+ && rm -f /tmp/lazygit /tmp/lazygit.tgz
 
 # ---- Per-user installs: mise, node, python, bun, pnpm, npm globals ---------
 USER ${USERNAME}
