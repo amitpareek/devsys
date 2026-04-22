@@ -16,18 +16,19 @@ die() { echo "[entrypoint] FATAL: $*" >&2; exit 1; }
 [ -n "${HOSTNAME:-}"   ] || die "HOSTNAME env var is required (e.g. -e HOSTNAME=my-box)"
 [ -n "${TS_AUTHKEY:-}" ] || die "TS_AUTHKEY env var is required (tskey-auth-...)"
 
-# ---- 1. Seed /home/dev on first boot --------------------------------------
-# If the volume is empty or has never been seeded, copy the baked-in home
-# (runtimes, AI CLIs, zsh config, work/ dir, vault/ dir, etc.) into place.
+# ---- 1. Seed / top up /home/dev from the baked-in snapshot ----------------
+# Runs every boot, not just the first. --ignore-existing means files the user
+# has edited on the volume always win; new tools added in a future image
+# release show up automatically. First boot is logged separately because it's
+# the expensive one (full ~1.9 GB copy); subsequent boots are near-instant.
 if [ ! -e "$SEED_MARK" ]; then
   log "first boot — seeding ${HOME_DIR} from ${SKEL_DIR}"
-  # -a preserves ownership/perms; --ignore-existing so user files on the
-  # volume (if any) win over skel defaults.
-  rsync -a --ignore-existing "${SKEL_DIR}/" "${HOME_DIR}/"
-  chown -R "${USERNAME}:${USERNAME}" "${HOME_DIR}"
-  touch "${SEED_MARK}"
-  chown "${USERNAME}:${USERNAME}" "${SEED_MARK}"
+else
+  log "topping up ${HOME_DIR} from ${SKEL_DIR} (new files only)"
 fi
+rsync -a --ignore-existing "${SKEL_DIR}/" "${HOME_DIR}/"
+chown -R "${USERNAME}:${USERNAME}" "${HOME_DIR}"
+[ -e "$SEED_MARK" ] || { touch "${SEED_MARK}"; chown "${USERNAME}:${USERNAME}" "${SEED_MARK}"; }
 
 # Persistent state dirs on the volume
 TS_STATE_DIR="${HOME_DIR}/.local/state/tailscale"
