@@ -20,7 +20,10 @@ die() { echo "[entrypoint] FATAL: $*" >&2; exit 1; }
 # so we don't need to wait for the rsync.
 TS_STATE_DIR="${HOME_DIR}/.local/state/tailscale"
 REDIS_DIR="${HOME_DIR}/.local/state/redis"
-mkdir -p "$TS_STATE_DIR" "$REDIS_DIR" /var/run/tailscale
+# Also mkdir ${HOME_DIR}/work synchronously so the Dockerfile's
+# WORKDIR /root/work is valid for docker-exec / OrbStack terminal
+# BEFORE the background seed completes.
+mkdir -p "$TS_STATE_DIR" "$REDIS_DIR" "${HOME_DIR}/work" /var/run/tailscale
 
 # ---- 2. Kick the seed / top-up off in the background ---------------------
 # Runs in parallel with tailscale bring-up and redis. --ignore-existing

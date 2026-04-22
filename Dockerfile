@@ -158,5 +158,11 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 
 RUN printf '\n  devsys — all-inclusive dev container\n  work dir: ~/work\n\n' > /etc/motd
 
+# Default pwd for every new process in the container (docker exec, OrbStack
+# UI terminal, fly ssh console, tailscale ssh). Shell-agnostic — survives
+# OrbStack's injected zsh which ignores /root/.zshrc and /root/.zlogin by
+# setting its own ZDOTDIR.
+WORKDIR /root/work
+
 EXPOSE 6379
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
