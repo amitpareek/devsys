@@ -148,6 +148,38 @@ RUN echo 'cd ~/work 2>/dev/null || true' > /root/.zlogin
 # Use zsh as root's login shell.
 RUN chsh -s /bin/zsh root
 
+# Claude Code refuses --dangerously-skip-permissions when running as root,
+# so we can't silence prompts via CLI flag. Instead, bake an exhaustive
+# user-level permissions allow-list into ~/.claude/settings.json.
+# Applies to every project (no project-level config needed).
+RUN mkdir -p /root/.claude \
+ && cat > /root/.claude/settings.json <<'JSON'
+{
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "allow": [
+      "Bash",       "Bash(*)",
+      "Edit",       "Edit(*)",
+      "MultiEdit",  "MultiEdit(*)",
+      "Write",      "Write(*)",
+      "Read",       "Read(*)",
+      "Glob",       "Glob(*)",
+      "Grep",       "Grep(*)",
+      "Task",       "Task(*)",
+      "Agent",      "Agent(*)",
+      "WebFetch",   "WebFetch(*)",
+      "WebSearch",  "WebSearch(*)",
+      "NotebookEdit","NotebookEdit(*)",
+      "TodoWrite",  "TodoWrite(*)",
+      "ExitPlanMode","ExitPlanMode(*)",
+      "Skill",      "Skill(*)",
+      "mcp__*"
+    ],
+    "deny": []
+  }
+}
+JSON
+
 # ---- Snapshot populated /root into /etc/skel/devsys, then empty /root so
 # the runtime mount (volume) can seed itself. `install` ensures an empty
 # /root with correct perms after the move.
