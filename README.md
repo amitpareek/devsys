@@ -16,7 +16,7 @@ these two. The container refuses to start without them.
 | `TS_AUTHKEY` | Tailscale auth key so the container can headlessly join your tailnet on first boot. | Generate at https://login.tailscale.com/admin/settings/keys — mark **Reusable** so restarts don't need a new key. |
 
 The only other thing you need is a **persistent volume** mounted at
-`/home/dev` inside the container (everything — tailscale state, shell
+`/root` inside the container (everything — tailscale state, shell
 history, AI auth, redis data, your `~/work`/`~/vault` — lives there).
 
 ## Quick start
@@ -41,7 +41,7 @@ Edit https://login.tailscale.com/admin/acls/file.
     "action": "accept",
     "src":    ["autogroup:member"],
     "dst":    ["autogroup:self"],
-    "users":  ["autogroup:nonroot", "root"]
+    "users":  ["root"]
   }
 ]
 ```
@@ -57,7 +57,7 @@ have no user-owner, so `autogroup:self` never matches):
     "action": "accept",
     "src":    ["autogroup:member"],
     "dst":    ["tag:devsys"],
-    "users":  ["autogroup:nonroot", "root"]
+    "users":  ["root"]
   }
 ]
 ```
@@ -75,7 +75,7 @@ docker run -d --restart=unless-stopped \
   --name "$HOST" \
   -e HOSTNAME="$HOST" \
   -e TS_AUTHKEY="$TS_AUTHKEY" \
-  -v devsys-home:/home/dev \
+  -v devsys-home:/root \
   ghcr.io/amitpareek/devsys:latest
 ```
 
@@ -85,14 +85,19 @@ Container refuses to start if either env var is missing.
 
 ```bash
 docker exec -it "$HOST" zsh          # always works, lands in ~/work
-tailscale ssh dev@"$HOST"            # from any tailnet device, once joined
+tailscale ssh root@"$HOST"           # from any tailnet device, once joined
+fly ssh console -a <fly-app>         # on Fly — opens a root shell in ~/work
 ```
+
+All three drop you into the same environment: root shell, zsh with
+starship/aliases, cwd = `~/work`. There's only one user (root) inside
+the container, so the different access paths don't drift.
 
 ### Optional — Obsidian vault
 
 Bind-mount a host vault at `~/vault` inside the container:
 ```bash
-docker run ... -v ~/Documents/MyVault:/home/dev/vault ...
+docker run ... -v ~/Documents/MyVault:/root/vault ...
 ```
 
 ## What's included
@@ -136,7 +141,7 @@ you shell in.
 | Modern unix | `eza` (`ls`, `ll`, `tree` aliases), `bat` (`cat` alias), `fd`, `rg` (ripgrep), `fzf` |
 | Monitoring | `htop`, `ncdu` |
 | Misc | `jq`, `direnv`, `tmux`, `lazygit` (alias `lg`), `glow` |
-| Net / dev | `git`, `curl`, `wget`, `sudo`, `openssh-client`, `iputils-ping`, `dnsutils`, `net-tools`, `rsync`, `unzip`, `build-essential`, `pkg-config` |
+| Net / dev | `git`, `curl`, `wget`, `openssh-client`, `iputils-ping`, `dnsutils`, `net-tools`, `rsync`, `unzip`, `build-essential`, `pkg-config` |
 
 ### Tailnet
 - `tailscale`, `tailscaled` — `--ssh` enabled on first boot, userspace-networking (no `NET_ADMIN` capability needed).
@@ -178,8 +183,8 @@ of the free tier.
 ## Optional — .NET SDK
 
 Not baked into the image (saves ~700 MB for everyone who doesn't need
-it). When you want it, run this **inside the container** as the `dev`
-user. Installs to `~/.dotnet`, no `sudo` needed, works on amd64 + arm64.
+it). When you want it, run this **inside the container** (as root).
+Installs to `~/.dotnet`, works on amd64 + arm64.
 
 ```bash
 # LTS (.NET 8 — support through Nov 2026)
@@ -211,7 +216,7 @@ the install survives container restarts / image updates.
 
 ## Persistence
 
-One volume at `/home/dev` holds everything: shell history, tailscale state,
+One volume at `/root` holds everything: shell history, tailscale state,
 AI tool auth, redis data, npm/pnpm/bun caches, your `~/work` files.
 
 On every boot the entrypoint tops up this volume from a snapshot baked
@@ -246,10 +251,12 @@ fly.toml, and runs `fly apps create`, `fly volumes create`, `fly secrets
 set`, `fly deploy` in sequence. Safe to re-run — each step checks for
 existing state.
 
-Manual path: edit the `app` + `HOSTNAME` fields in [fly.toml](./fly.toml),
-`fly volumes create devsys_home --size 10`, `fly secrets set
-TS_AUTHKEY=...`, then `fly deploy`. The Machine never publishes a port —
-all access is through `tailscale ssh`.
+Manual path: edit the `app` + `HOSTNAME` + mount `source` fields in
+[fly.toml](./fly.toml), `fly volumes create <vol-name> --size 10`,
+`fly secrets set TS_AUTHKEY=...`, then `fly deploy --ha=false --now`.
+The Machine never publishes a port — all access is through `tailscale ssh`
+(or `fly ssh console` as a break-glass, which also lands as root in
+`~/work`).
 
 ## Building / publishing
 
@@ -261,11 +268,31 @@ Local build for your host arch:
 docker build -t devsys:local .
 ```
 
+## Upgrading from an older image
+
+The container now runs as **root**, not `dev` (simpler for headless
+tailnet-only dev boxes — `fly ssh console`, `tailscale ssh`, and
+`docker exec` all land in the same place). If you previously mounted a
+volume at `/home/dev`, either:
+
+1. Fresh start — nuke the volume, re-run, first boot seeds `/root` from
+   the baked snapshot: `docker volume rm devsys-home` (or on Fly,
+   `fly volumes destroy`).
+2. Migrate — rename the volume mount destination to `/root`. Your files
+   under `~/work`, `~/.claude`, etc. are preserved because the paths
+   inside the volume are relative (`work/...`, not `/home/dev/work/...`).
+   Update your compose / fly.toml / `docker run -v` to point at `/root`.
+
+The Tailscale ACL must include `"users": ["root"]` (not just
+`autogroup:nonroot`) since the only user is root — see step 2 of Quick
+start.
+
 ## Troubleshooting
 
 **`tailnet policy does not permit you to SSH to this node`** — the tailnet
 ACL doesn't have an SSH rule matching this node. See step 2 above. Tag
-mismatch is the usual cause.
+mismatch or `autogroup:nonroot` without `root` in `users` is the usual
+cause (we now run as root, so `users` must include `"root"`).
 
 **`FATAL: HOSTNAME env var is required`** — you didn't pass `-e HOSTNAME=...`.
 

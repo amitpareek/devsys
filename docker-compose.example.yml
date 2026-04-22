@@ -4,14 +4,14 @@
 #   docker run -d --restart=unless-stopped \
 #     -e HOSTNAME=my-dev-box \
 #     -e TS_AUTHKEY=tskey-auth-xxxxxxxx \
-#     -v devsys-home:/home/dev \
+#     -v devsys-home:/root \
 #     ghcr.io/amitpareek/devsys:latest
 #
 # Or with this compose file:
 #   DEV_HOSTNAME=my-dev-box TS_AUTHKEY=tskey-auth-xxx docker compose up -d
 #
 # Persistence: everything lives under the single `devsys-home` volume,
-# mounted at /home/dev. Nuking this volume resets the box (shell history,
+# mounted at /root. Nuking this volume resets the box (shell history,
 # tailscale state, AI auth, redis data all go with it).
 #
 # Optional: bind-mount a host folder as the Obsidian vault at ~/vault.
@@ -29,9 +29,9 @@ services:
       TS_AUTHKEY: ${TS_AUTHKEY:?set TS_AUTHKEY}   # reusable tskey-auth-... recommended
     restart: unless-stopped
     volumes:
-      - devsys-home:/home/dev
+      - devsys-home:/root
       # Optional: uncomment and point at a host Obsidian vault
-      # - ${HOME}/Documents/MyVault:/home/dev/vault
+      # - ${HOME}/Documents/MyVault:/root/vault
 
 volumes:
   devsys-home:
