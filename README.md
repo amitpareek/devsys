@@ -5,6 +5,30 @@ holds all persistent state.
 
 **Image:** `ghcr.io/amitpareek/devsys:latest` (linux/amd64 + linux/arm64)
 
+## Quick install
+
+```bash
+export TS_AUTHKEY=tskey-auth-xxxxxxxx   # https://login.tailscale.com/admin/settings/keys (mark Reusable)
+export HOST=my-devbox                   # any DNS-safe name; becomes the tailnet hostname
+
+docker run -d --restart=unless-stopped \
+  --name "$HOST" \
+  -e HOSTNAME="$HOST" \
+  -e TS_AUTHKEY="$TS_AUTHKEY" \
+  -v devsys-home:/root \
+  ghcr.io/amitpareek/devsys:latest
+
+docker exec -it "$HOST" zsh             # shell in — lands in ~/work
+```
+
+First boot also needs a one-time tailnet ACL tweak so SSH works — see [Quick start → step 2](#2-configure-the-tailnet-policy).
+
+---
+
+**Contents:** [Required env](#required-environment-variables) · [Quick start](#quick-start) · [What's included](#whats-included) · [Obsidian](#obsidian-notes) · [.NET SDK](#optional--net-sdk) · [Persistence](#persistence) · [Cloud deployments](#cloud-deployments) · [Building](#building--publishing) · [Upgrading](#upgrading-from-an-older-image) · [Troubleshooting](#troubleshooting) · [Notes](#notes)
+
+---
+
 ## Required environment variables
 
 Every deployment (local Docker, Compose, Fly.io, any VPS) needs exactly
