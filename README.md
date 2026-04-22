@@ -5,6 +5,20 @@ holds all persistent state.
 
 **Image:** `ghcr.io/amitpareek/devsys:latest` (linux/amd64 + linux/arm64)
 
+## Required environment variables
+
+Every deployment (local Docker, Compose, Fly.io, any VPS) needs exactly
+these two. The container refuses to start without them.
+
+| Env var | What it is | How to get it |
+|---|---|---|
+| `HOSTNAME` | System hostname **and** tailnet hostname (they're always the same). | Pick any DNS-safe name, e.g. `my-devbox`. |
+| `TS_AUTHKEY` | Tailscale auth key so the container can headlessly join your tailnet on first boot. | Generate at https://login.tailscale.com/admin/settings/keys — mark **Reusable** so restarts don't need a new key. |
+
+The only other thing you need is a **persistent volume** mounted at
+`/home/dev` inside the container (everything — tailscale state, shell
+history, AI auth, redis data, your `~/work`/`~/vault` — lives there).
+
 ## Quick start
 
 ### 1. Get a Tailscale auth key
@@ -188,9 +202,20 @@ Templates:
 - **Compose** (local / VPS): [docker-compose.example.yml](./docker-compose.example.yml)
 - **Fly.io** (one always-on machine + volume, tailnet-only access): [fly.toml](./fly.toml)
 
-For Fly: edit the `app` + `HOSTNAME` fields, `fly volumes create devsys_home --size 10`,
-`fly secrets set TS_AUTHKEY=...`, then `fly deploy`. The Machine never
-publishes a port — all access is through `tailscale ssh`.
+**Fastest Fly path** — the interactive script handles app / volume /
+secret / deploy in one go:
+```bash
+./flysetup.sh
+```
+It asks for app name, region, volume size, and your `TS_AUTHKEY`, patches
+fly.toml, and runs `fly apps create`, `fly volumes create`, `fly secrets
+set`, `fly deploy` in sequence. Safe to re-run — each step checks for
+existing state.
+
+Manual path: edit the `app` + `HOSTNAME` fields in [fly.toml](./fly.toml),
+`fly volumes create devsys_home --size 10`, `fly secrets set
+TS_AUTHKEY=...`, then `fly deploy`. The Machine never publishes a port —
+all access is through `tailscale ssh`.
 
 ## Building / publishing
 
