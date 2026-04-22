@@ -56,7 +56,13 @@ echo
 # ---- Prompts ----------------------------------------------------------------
 printf "${BOLD}devsys → Fly.io setup${NC}\n\n"
 
-APP_NAME=$(ask "App name (also becomes tailnet hostname)" "my-devsys")
+HOSTNAME_INPUT=$(ask "Hostname (doubles as fly app name and tailnet name)" "my-devsys")
+APP_NAME="$HOSTNAME_INPUT"
+
+# Fly volume names allow only [a-z0-9_]. Replace anything else with '_'.
+SAFE_HOST=$(echo "$HOSTNAME_INPUT" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_' '_')
+VOL_NAME="devsys_${SAFE_HOST}_vol"
+
 REGION=$(ask   "Primary region (see: fly platform regions)" "ams")
 VOL_SIZE=$(ask "Persistent volume size in GB" "10")
 TS_AUTHKEY=$(ask_secret "Tailscale auth key (tskey-auth-...)")
@@ -72,9 +78,9 @@ esac
 
 echo
 info "Plan:"
-echo "  app            = $APP_NAME"
+echo "  hostname / app = $APP_NAME"
 echo "  region         = $REGION"
-echo "  volume size    = ${VOL_SIZE}GB"
+echo "  volume         = $VOL_NAME (${VOL_SIZE}GB)"
 echo "  ts authkey     = (hidden)"
 echo
 read -rp "$(printf "${YELLOW}?${NC} Proceed? [Y/n]: ")" CONFIRM
@@ -93,6 +99,7 @@ sed "${SED_I[@]}" \
   -e "s|^app\( *\)=.*|app            = \"$APP_NAME\"|" \
   -e "s|^primary_region\( *\)=.*|primary_region = \"$REGION\"|" \
   -e "s|^  HOSTNAME = .*|  HOSTNAME = \"$APP_NAME\"|" \
+  -e "s|^  source       = .*|  source       = \"$VOL_NAME\"|" \
   -e "s|^  initial_size = .*|  initial_size = \"${VOL_SIZE}gb\"|" \
   fly.toml
 ok "fly.toml updated (backup at fly.toml.bak)"
@@ -106,11 +113,11 @@ else
 fi
 
 VOLS_JSON=$(fly volumes list -a "$APP_NAME" --json 2>/dev/null || echo '[]')
-if echo "$VOLS_JSON" | grep -q '"name": *"devsys_home"'; then
-  ok "volume 'devsys_home' already exists"
+if echo "$VOLS_JSON" | grep -q "\"name\": *\"$VOL_NAME\""; then
+  ok "volume '$VOL_NAME' already exists"
 else
-  info "Creating volume 'devsys_home' (${VOL_SIZE}GB in $REGION)..."
-  fly volumes create devsys_home --size "$VOL_SIZE" --region "$REGION" -a "$APP_NAME" --yes
+  info "Creating volume '$VOL_NAME' (${VOL_SIZE}GB in $REGION)..."
+  fly volumes create "$VOL_NAME" --size "$VOL_SIZE" --region "$REGION" -a "$APP_NAME" --yes
 fi
 
 info "Setting TS_AUTHKEY secret..."

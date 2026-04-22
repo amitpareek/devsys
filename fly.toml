@@ -34,7 +34,7 @@ primary_region = "ams"                     # pick any — see `fly platform regi
 # redis data, ~/work files — everything lives here. Destroying the
 # volume resets the box.
 [[mounts]]
-  source       = "devsys_home"
+  source       = "devsys_home"        # flysetup.sh rewrites this to devsys_<hostname>_vol
   destination  = "/home/dev"
   initial_size = "10gb"
 

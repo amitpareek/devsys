@@ -3,6 +3,12 @@ name: build-and-push
 on:
   push:
     branches: [main]
+    # Only trigger when the image actually changes. README / fly.toml /
+    # flysetup.sh / compose / .md edits should NOT publish a new image.
+    paths:
+      - Dockerfile
+      - entrypoint.sh
+      - .github/workflows/docker.yml
     tags: ["v*"]
   workflow_dispatch:
 
