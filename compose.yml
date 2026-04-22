@@ -1,42 +1,44 @@
 # devsys — local Docker / OrbStack sample.
 #
-# Usage:
-#   1. cp .env.example .env
-#   2. edit .env — set the variables for the container(s) you want
-#   3. docker compose up -d
+# Edit the three lines marked "← CHANGE" per container, then:
+#   docker compose up -d
 #
 # Shell in:
 #   docker exec -it <host> zsh         # lands in ~/work
 #   tailscale ssh root@<host>          # once tailnet is joined
 #
-# To run two boxes side-by-side, uncomment the second service + its
-# variables in .env. Each box gets its own tailnet name and its own
-# persistent volume.
+# ⚠  The TS_AUTHKEY sits in plaintext here. Don't commit this file
+#    with real values — either gitignore it locally or move the key
+#    to a .env file (see .env.example).
+#
+# YAML anchors (&name / *name) let us define each value once and
+# reuse it — so the container name, `hostname`, and HOSTNAME env are
+# all guaranteed to match.
 
 services:
 
   # ── First container ────────────────────────────────────────────────
   dev1:
     image: ghcr.io/amitpareek/devsys:latest
-    container_name: ${HOST1:?set HOST1 in .env}
-    hostname:       ${HOST1}                                # tailnet name
+    container_name: &host1 my-devbox                     # ← CHANGE: tailnet name
+    hostname: *host1
     environment:
-      HOSTNAME:     ${HOST1}                                # must match `hostname`
-      TS_AUTHKEY:   ${TS_AUTHKEY1:?set TS_AUTHKEY1 in .env}
+      HOSTNAME: *host1
+      TS_AUTHKEY: tskey-auth-REPLACE-WITH-REUSABLE-KEY   # ← CHANGE: reusable tskey-auth-...
     volumes:
-      - ${DATA1:-devsys-home-1}:/root                       # named volume by default
+      - devsys-home-1:/root                              # ← CHANGE (optional): /abs/host/path to bind-mount instead
     restart: unless-stopped
 
   # ── Second container (uncomment to enable) ─────────────────────────
   # dev2:
   #   image: ghcr.io/amitpareek/devsys:latest
-  #   container_name: ${HOST2:?set HOST2 in .env}
-  #   hostname:       ${HOST2}
+  #   container_name: &host2 my-second-box               # ← CHANGE
+  #   hostname: *host2
   #   environment:
-  #     HOSTNAME:     ${HOST2}
-  #     TS_AUTHKEY:   ${TS_AUTHKEY2:?set TS_AUTHKEY2 in .env}
+  #     HOSTNAME: *host2
+  #     TS_AUTHKEY: tskey-auth-REPLACE-WITH-REUSABLE-KEY # ← CHANGE (can reuse same key)
   #   volumes:
-  #     - ${DATA2:-devsys-home-2}:/root
+  #     - devsys-home-2:/root                            # ← CHANGE (optional)
   #   restart: unless-stopped
 
 volumes:
