@@ -1,6 +1,7 @@
-# devsys — all-inclusive Ubuntu dev container
+# devsys — all-inclusive Ubuntu dev container, runs as root.
 # Everything (runtimes, CLIs, shell, services) is baked in.
-# Single mount at /home/dev = full persistence (seeded on first boot from /etc/skel/devsys).
+# Single mount at /root = full persistence (topped up from /etc/skel/devsys
+# on every boot).
 #
 # Required env at runtime (container refuses to start if either is missing):
 #   HOSTNAME     system hostname AND tailnet hostname (single source of truth)
@@ -8,24 +9,21 @@
 
 FROM ubuntu:24.04
 
-ARG USERNAME=dev
-ARG USER_UID=1000
-ARG USER_GID=1000
-
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
-    USERNAME=${USERNAME} \
-    HOME=/home/${USERNAME} \
-    NPM_CONFIG_PREFIX=/home/${USERNAME}/.npm-global \
-    PNPM_HOME=/home/${USERNAME}/.local/share/pnpm \
-    BUN_INSTALL=/home/${USERNAME}/.bun \
-    MISE_DATA_DIR=/home/${USERNAME}/.local/share/mise \
-    PATH=/home/${USERNAME}/.local/bin:/home/${USERNAME}/.local/share/mise/shims:/home/${USERNAME}/.bun/bin:/home/${USERNAME}/.npm-global/bin:/home/${USERNAME}/.local/share/pnpm:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    HOME=/root \
+    NPM_CONFIG_PREFIX=/root/.npm-global \
+    PNPM_HOME=/root/.local/share/pnpm \
+    BUN_INSTALL=/root/.bun \
+    MISE_DATA_DIR=/root/.local/share/mise \
+    PATH=/root/.local/bin:/root/.local/share/mise/shims:/root/.bun/bin:/root/.npm-global/bin:/root/.local/share/pnpm:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-# ---- Base packages, user, apt-installable tools ----------------------------
+WORKDIR /root
+
+# ---- Base packages ---------------------------------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates curl wget gnupg lsb-release sudo \
+      ca-certificates curl wget gnupg lsb-release \
       iptables iproute2 openssh-client \
       bash zsh git vim less \
       build-essential pkg-config \
@@ -35,24 +33,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       redis-server \
       postgresql-client \
       python3 python3-pip python3-venv \
-    && ln -sf /usr/bin/fdfind /usr/local/bin/fd \
-    && ln -sf /usr/bin/batcat /usr/local/bin/bat \
-    && (userdel -r ubuntu 2>/dev/null || true) \
-    && groupadd --gid ${USER_GID} ${USERNAME} \
-    && useradd --uid ${USER_UID} --gid ${USER_GID} -m -s /bin/zsh ${USERNAME} \
-    && usermod -aG sudo ${USERNAME} \
-    && echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/${USERNAME} \
-    && chmod 0440 /etc/sudoers.d/${USERNAME} \
-    && chmod 0755 /home/${USERNAME} \
-    && install -d -m 755 -o ${USERNAME} -g ${USERNAME} \
-         /home/${USERNAME}/.cache \
-         /home/${USERNAME}/.config \
-         /home/${USERNAME}/.local \
-         /home/${USERNAME}/.local/bin \
-         /home/${USERNAME}/.local/share \
-         /home/${USERNAME}/.local/state \
-    && chown -R ${USERNAME}:${USERNAME} /home/${USERNAME} \
-    && rm -rf /var/lib/apt/lists/*
+ && ln -sf /usr/bin/fdfind /usr/local/bin/fd \
+ && ln -sf /usr/bin/batcat /usr/local/bin/bat \
+ && rm -rf /var/lib/apt/lists/*
 
 # ---- Third-party apt repos: tailscale, eza, gh, charm (glow) ----------------
 RUN mkdir -p /etc/apt/keyrings /usr/share/keyrings \
@@ -79,10 +62,10 @@ RUN mkdir -p /etc/apt/keyrings /usr/share/keyrings \
 
 # ---- Starship, flyctl (system-wide), lazygit -------------------------------
 RUN curl -fsSL https://starship.rs/install.sh | sh -s -- --yes --bin-dir /usr/local/bin \
- && HOME=/root curl -fsSL https://fly.io/install.sh | FLYCTL_INSTALL=/opt/fly HOME=/root sh \
+ && HOME=/opt curl -fsSL https://fly.io/install.sh | FLYCTL_INSTALL=/opt/fly HOME=/opt sh \
  && ln -sf /opt/fly/bin/flyctl /usr/local/bin/flyctl \
  && ln -sf /opt/fly/bin/flyctl /usr/local/bin/fly \
- && rm -rf /root/.fly \
+ && rm -rf /opt/.fly \
  && ARCH=$(dpkg --print-architecture) \
  && case "$ARCH" in \
       arm64) LG_ARCH=arm64  ;; \
@@ -97,16 +80,12 @@ RUN curl -fsSL https://starship.rs/install.sh | sh -s -- --yes --bin-dir /usr/lo
  && install /tmp/lazygit /usr/local/bin/lazygit \
  && rm -f /tmp/lazygit /tmp/lazygit.tgz
 
-# ---- Per-user installs: mise, node, python, bun, pnpm, npm globals ---------
-USER ${USERNAME}
-WORKDIR /home/${USERNAME}
-
+# ---- Runtimes + globals (all installed into /root) --------------------------
 RUN curl -fsSL https://mise.run | sh \
- && ~/.local/bin/mise use --global --yes node@lts \
- && ~/.local/bin/mise use --global --yes python@3.12 \
- && ~/.local/bin/mise reshim \
- && export PATH="$HOME/.local/share/mise/shims:$NPM_CONFIG_PREFIX/bin:$PATH" \
- && mkdir -p "$NPM_CONFIG_PREFIX" \
+ && /root/.local/bin/mise use --global --yes node@lts \
+ && /root/.local/bin/mise use --global --yes python@3.12 \
+ && /root/.local/bin/mise reshim \
+ && mkdir -p "$NPM_CONFIG_PREFIX" "$PNPM_HOME/store" "$PNPM_HOME/global" \
  && npm install -g \
       pnpm \
       neonctl \
@@ -115,15 +94,14 @@ RUN curl -fsSL https://mise.run | sh \
       @openai/codex \
       opencode-ai \
       obsidian-headless \
- && mkdir -p "$PNPM_HOME/store" "$PNPM_HOME/global" \
  && pnpm config set store-dir      "$PNPM_HOME/store" \
  && pnpm config set global-dir     "$PNPM_HOME/global" \
  && pnpm config set global-bin-dir "$PNPM_HOME" \
  && curl -fsSL https://bun.sh/install | bash
 
-# ---- Shell config, work/vault dirs ----------------------------------------
-RUN mkdir -p /home/${USERNAME}/work /home/${USERNAME}/vault \
- && cat > /home/${USERNAME}/.zshenv <<'ZSHENV'
+# ---- Shell config + work/vault dirs ----------------------------------------
+RUN mkdir -p /root/work /root/vault \
+ && cat > /root/.zshenv <<'ZSHENV'
 typeset -U path PATH
 path=(
   "$HOME/.local/bin"
@@ -140,7 +118,7 @@ export BUN_INSTALL="$HOME/.bun"
 export MISE_DATA_DIR="$HOME/.local/share/mise"
 ZSHENV
 
-RUN cat > /home/${USERNAME}/.zshrc <<'ZSHRC'
+RUN cat > /root/.zshrc <<'ZSHRC'
 HISTFILE=~/.zsh_history
 HISTSIZE=10000
 SAVEHIST=10000
@@ -160,18 +138,19 @@ alias claude='claude --dangerously-skip-permissions'
 cd ~/work 2>/dev/null || true
 ZSHRC
 
-# ---- Snapshot the populated home into /etc/skel/devsys, then empty /home/dev
-# so the runtime mount (volume) can seed itself on first boot.
-USER root
+# Use zsh as root's login shell.
+RUN chsh -s /bin/zsh root
+
+# ---- Snapshot populated /root into /etc/skel/devsys, then empty /root so
+# the runtime mount (volume) can seed itself. `install` ensures an empty
+# /root with correct perms after the move.
 RUN mkdir -p /etc/skel \
- && mv /home/${USERNAME} /etc/skel/devsys \
- && mkdir -p /home/${USERNAME} \
- && chown ${USERNAME}:${USERNAME} /home/${USERNAME}
+ && mv /root /etc/skel/devsys \
+ && install -d -m 700 /root
 
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
-# Also give root a quick motd
 RUN printf '\n  devsys — all-inclusive dev container\n  work dir: ~/work   vault (optional): ~/vault\n\n' > /etc/motd
 
 EXPOSE 6379

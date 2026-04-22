@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
-# devsys entrypoint — seeds the volume on first boot, then brings up
-# tailscale (auto-joins with TS_AUTHKEY if not already connected) and redis.
-# Runs tailscaled in the foreground as PID 1 so Docker's lifecycle tracks it.
+# devsys entrypoint — tops up /root from the baked snapshot on every boot,
+# then brings up redis and tailscale. Runs tailscaled as PID 1 so Docker
+# tracks its lifecycle.
 set -euo pipefail
 
-USERNAME="${USERNAME:-dev}"
-HOME_DIR="/home/${USERNAME}"
+HOME_DIR="/root"
 SKEL_DIR="/etc/skel/devsys"
 SEED_MARK="${HOME_DIR}/.devsys-seeded"
 
@@ -16,31 +15,28 @@ die() { echo "[entrypoint] FATAL: $*" >&2; exit 1; }
 [ -n "${HOSTNAME:-}"   ] || die "HOSTNAME env var is required (e.g. -e HOSTNAME=my-box)"
 [ -n "${TS_AUTHKEY:-}" ] || die "TS_AUTHKEY env var is required (tskey-auth-...)"
 
-# ---- 1. Seed / top up /home/dev from the baked-in snapshot ----------------
-# Runs every boot, not just the first. --ignore-existing means files the user
-# has edited on the volume always win; new tools added in a future image
-# release show up automatically. First boot is logged separately because it's
-# the expensive one (full ~1.9 GB copy); subsequent boots are near-instant.
+# ---- 1. Top up /root from the baked-in snapshot ---------------------------
+# Runs every boot. --ignore-existing means files you've edited on the
+# volume always win; new tools added in a future image release show up
+# automatically. First boot is logged separately because it's the
+# expensive one (full ~1.9 GB copy); subsequent boots are near-instant.
 if [ ! -e "$SEED_MARK" ]; then
   log "first boot — seeding ${HOME_DIR} from ${SKEL_DIR}"
 else
   log "topping up ${HOME_DIR} from ${SKEL_DIR} (new files only)"
 fi
 rsync -a --ignore-existing "${SKEL_DIR}/" "${HOME_DIR}/"
-chown -R "${USERNAME}:${USERNAME}" "${HOME_DIR}"
-[ -e "$SEED_MARK" ] || { touch "${SEED_MARK}"; chown "${USERNAME}:${USERNAME}" "${SEED_MARK}"; }
+[ -e "$SEED_MARK" ] || touch "${SEED_MARK}"
 
 # Persistent state dirs on the volume
 TS_STATE_DIR="${HOME_DIR}/.local/state/tailscale"
 REDIS_DIR="${HOME_DIR}/.local/state/redis"
 mkdir -p "$TS_STATE_DIR" "$REDIS_DIR" /var/run/tailscale
-chown -R "${USERNAME}:${USERNAME}" "${HOME_DIR}/.local" 2>/dev/null || true
 
 # ---- 2. Redis (background, bound to loopback) -----------------------------
 if command -v redis-server >/dev/null 2>&1; then
   if ! pgrep -x redis-server >/dev/null 2>&1; then
     log "starting redis-server (127.0.0.1:6379, dir=${REDIS_DIR})"
-    chown redis:redis "$REDIS_DIR" 2>/dev/null || true
     redis-server \
       --bind 127.0.0.1 \
       --port 6379 \
@@ -51,22 +47,17 @@ if command -v redis-server >/dev/null 2>&1; then
   fi
 fi
 
-# ---- 3. Resolve + apply hostname ------------------------------------------
-# Single source of truth: the HOSTNAME env var (falls back to whatever docker
-# set via --hostname, else the container ID). We apply it to the kernel so
-# `hostname` inside the shell matches, and re-use it for tailscale.
-HOST="${HOSTNAME:-$(hostname)}"
-if [ -n "${HOSTNAME:-}" ] && [ "$(hostname)" != "$HOSTNAME" ]; then
+# ---- 3. Apply hostname ----------------------------------------------------
+# HOSTNAME env is the source of truth. Apply to the kernel so `hostname`
+# matches and re-use for tailscale.
+HOST="$HOSTNAME"
+if [ "$(hostname)" != "$HOSTNAME" ]; then
   hostname "$HOSTNAME" 2>/dev/null || true
   echo "$HOSTNAME" > /etc/hostname 2>/dev/null || true
 fi
 log "hostname: ${HOST}"
 
 # ---- 4. Bring up tailscale -------------------------------------------------
-# Strategy: background tailscaled, wait for socket, then `tailscale up` if
-# we aren't already connected.  TS_AUTHKEY makes it headless; without one,
-# we fall back to printing a login URL.
-
 /usr/sbin/tailscaled \
   --state="${TS_STATE_DIR}/tailscaled.state" \
   --socket=/var/run/tailscale/tailscaled.sock \
@@ -94,8 +85,7 @@ else
 fi
 
 # ---- 5. Hand off: keep tailscaled as the long-running process -------------
-# Trap so signals cleanly stop tailscaled.
 trap 'log "stopping..."; kill -TERM "$TAILSCALED_PID" 2>/dev/null || true; wait "$TAILSCALED_PID" 2>/dev/null || true; exit 0' TERM INT
 
-log "ready — use 'tailscale ssh ${USERNAME}@${HOST}' or 'docker exec -it <c> zsh'"
+log "ready — use 'tailscale ssh root@${HOST}' or 'docker exec -it <c> zsh'"
 wait "$TAILSCALED_PID"

@@ -1,0 +1,57 @@
+# devsys — deploy to Fly.io as an always-on tailnet dev box.
+#
+# Model: one fly Machine, one volume at /home/dev, reachable only over
+# your tailnet (no public fly edge routing). Costs are ~$1.94/mo for a
+# shared-cpu-1x + 10GB volume in most regions.
+#
+# ─── One-time setup ─────────────────────────────────────────────────
+#   1. Pick a unique app name and edit `app` + `HOSTNAME` below to match.
+#   2. fly apps create <app-name>
+#   3. fly volumes create devsys_home --size 10 --region <your-region>
+#   4. fly secrets set TS_AUTHKEY=tskey-auth-xxxxxxxx
+#   5. fly deploy
+#
+# ─── Day-to-day ─────────────────────────────────────────────────────
+#   tailscale ssh dev@<app-name>           # from any tailnet device
+#   fly logs                               # follow container stdout
+#   fly machine restart <id>               # reload entrypoint (picks up
+#                                          # newly pulled image tools)
+#
+# Bumping the image pulls ghcr.io/amitpareek/devsys:latest on next deploy.
+
+app            = "CHANGE-ME-devsys"
+primary_region = "ams"                     # pick any — see `fly platform regions`
+
+[build]
+  image = "ghcr.io/amitpareek/devsys:latest"
+
+[env]
+  # Kernel + tailnet hostname. Must match `app` above (or whatever name
+  # you want the box to appear as on your tailnet).
+  HOSTNAME = "CHANGE-ME-devsys"
+
+# Single persistence volume. Shell history, tailscale state, AI auth,
+# redis data, ~/work files — everything lives here. Destroying the
+# volume resets the box.
+[[mounts]]
+  source       = "devsys_home"        # flysetup.sh rewrites this to devsys_<hostname>_vol
+  destination  = "/home/dev"
+  initial_size = "10gb"
+
+# One always-running machine. No auto-stop: a dev box should be reachable
+# whenever you ssh in. Bump memory if you hit OOMs with heavy builds.
+[[vm]]
+  size   = "shared-cpu-1x"
+  memory = "2gb"
+
+# No [[services]] block: the container isn't exposed on fly's public
+# edge. All access is through tailscale SSH (or `fly ssh console` as a
+# break-glass). Don't open ports here.
+
+[deploy]
+  # A rolling restart on deploy is fine; there's only one machine and
+  # we're not serving traffic.
+  strategy = "immediate"
+
+[[restart]]
+  policy = "always"
