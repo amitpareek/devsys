@@ -227,39 +227,46 @@ won't leak), edit the three lines marked `← CHANGE`, then
 `docker compose up -d`:
 
 ```yaml
+name: devsys                                             # compose project — groups the containers below
+
 services:
 
-  # ── First container ────────────────────────────────────────────────
-  dev1:
+  # ── First container: bhsys ────────────────────────────────────────
+  bhsys:
     image: ghcr.io/amitpareek/devsys:latest
-    container_name: &host1 my-devbox                     # ← CHANGE: tailnet name
+    container_name: &host1 bhsys                         # ← CHANGE: tailnet name
     hostname: *host1
     environment:
       HOSTNAME: *host1
       TS_AUTHKEY: tskey-auth-REPLACE-WITH-REUSABLE-KEY   # ← CHANGE
     volumes:
-      - devsys-home-1:/root                              # ← CHANGE (optional): /abs/host/path to bind-mount instead
+      - bhsys-home:/root                                 # ← CHANGE (optional): /abs/host/path to bind-mount instead
     restart: unless-stopped
 
-  # ── Second container (uncomment to enable) ─────────────────────────
-  # dev2:
+  # ── Second container: cksys (uncomment to enable) ─────────────────
+  # cksys:
   #   image: ghcr.io/amitpareek/devsys:latest
-  #   container_name: &host2 my-second-box
+  #   container_name: &host2 cksys
   #   hostname: *host2
   #   environment:
   #     HOSTNAME: *host2
   #     TS_AUTHKEY: tskey-auth-REPLACE-WITH-REUSABLE-KEY
   #   volumes:
-  #     - devsys-home-2:/root
+  #     - cksys-home:/root
   #   restart: unless-stopped
 
 volumes:
-  devsys-home-1:
-  # devsys-home-2:
+  bhsys-home:
+  # cksys-home:
 ```
 
-The `&host1` / `*host1` anchor ties container_name, docker hostname,
-and the `HOSTNAME` env var together — edit the name once.
+- `name: devsys` is the **compose project name** — a label that groups
+  the containers so `docker compose ps`, OrbStack UI, and similar tools
+  show them together under "devsys".
+- Each service key (`bhsys`, `cksys`) is how you refer to a specific
+  container with compose subcommands (`docker compose logs -f bhsys`).
+- The `&host1` / `*host1` anchor ties `container_name`, docker
+  `hostname`, and the `HOSTNAME` env var together — edit the name once.
 
 Common commands (run from the directory holding `compose.yml`):
 
@@ -271,10 +278,10 @@ docker compose up -d --force-recreate              # recreate with the newly pul
 docker compose pull && docker compose up -d --force-recreate   # update in one go
 
 # observe
-docker compose ps                                  # what's running
-docker compose logs -f dev1                        # follow entrypoint output
-docker exec -it my-devbox zsh                      # shell in (lands in /root/work)
-tailscale ssh root@my-devbox                       # once tailnet is joined
+docker compose ps                                  # what's running under project 'devsys'
+docker compose logs -f bhsys                       # follow entrypoint output for one service
+docker exec -it bhsys zsh                          # shell in (lands in /root/work)
+tailscale ssh root@bhsys                           # once tailnet is joined
 
 # stop
 docker compose stop                                # stop, keep volumes + state
