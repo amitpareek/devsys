@@ -10,12 +10,14 @@ holds all persistent state.
 ```bash
 export TS_AUTHKEY=tskey-auth-xxxxxxxx   # https://login.tailscale.com/admin/settings/keys (mark Reusable)
 export HOST=my-devbox                   # any DNS-safe name; becomes the tailnet hostname
+export WORK=~/Work                      # host folder to share into ~/work (edit in your IDE, run in the box)
 
 docker run -d --restart=unless-stopped \
   --name "$HOST" \
   -e HOSTNAME="$HOST" \
   -e TS_AUTHKEY="$TS_AUTHKEY" \
   -v devsys-home:/root \
+  -v "$WORK":/root/work \
   ghcr.io/amitpareek/devsys:latest
 
 docker exec -it "$HOST" zsh             # shell in — lands in ~/work
