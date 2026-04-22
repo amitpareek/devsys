@@ -42,6 +42,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && usermod -aG sudo ${USERNAME} \
     && echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/${USERNAME} \
     && chmod 0440 /etc/sudoers.d/${USERNAME} \
+    && chmod 0755 /home/${USERNAME} \
+    && install -d -m 755 -o ${USERNAME} -g ${USERNAME} \
+         /home/${USERNAME}/.cache \
+         /home/${USERNAME}/.config \
+         /home/${USERNAME}/.local \
+         /home/${USERNAME}/.local/bin \
+         /home/${USERNAME}/.local/share \
+         /home/${USERNAME}/.local/state \
+    && chown -R ${USERNAME}:${USERNAME} /home/${USERNAME} \
     && rm -rf /var/lib/apt/lists/*
 
 # ---- Third-party apt repos: tailscale, eza, gh, charm (glow) ----------------
