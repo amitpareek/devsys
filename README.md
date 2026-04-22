@@ -238,7 +238,7 @@ services:
     hostname: *host1
     environment:
       HOSTNAME: *host1
-      TS_AUTHKEY: tskey-auth-REPLACE-WITH-REUSABLE-KEY   # ← CHANGE
+      TS_AUTHKEY: ${TS_AUTHKEY:?set TS_AUTHKEY on the command line}
     volumes:
       - bhsys-home:/root                                 # ← CHANGE (optional): /abs/host/path to bind-mount instead
     restart: unless-stopped
@@ -250,7 +250,7 @@ services:
   #   hostname: *host2
   #   environment:
   #     HOSTNAME: *host2
-  #     TS_AUTHKEY: tskey-auth-REPLACE-WITH-REUSABLE-KEY
+  #     TS_AUTHKEY: ${TS_AUTHKEY_CKSYS:?set TS_AUTHKEY_CKSYS on the command line}
   #   volumes:
   #     - cksys-home:/root
   #   restart: unless-stopped
@@ -268,10 +268,24 @@ volumes:
 - The `&host1` / `*host1` anchor ties `container_name`, docker
   `hostname`, and the `HOSTNAME` env var together — edit the name once.
 
+The compose file references `${TS_AUTHKEY}` (and `${TS_AUTHKEY_CKSYS}`
+for the second container) — the auth key isn't stored in the file; you
+pass it on the command line or keep it in your shell env. Compose errors
+out if it isn't set. Pattern:
+
+```bash
+# one-shot (key lives only in the command)
+TS_AUTHKEY=tskey-auth-xxxxxxxx docker compose up -d
+
+# or export once per shell session
+export TS_AUTHKEY=tskey-auth-xxxxxxxx
+docker compose up -d
+```
+
 Common commands (run from the directory holding `compose.yml`):
 
 ```bash
-# start / update
+# start / update  (all need TS_AUTHKEY set in the env)
 docker compose up -d                               # create + start (or no-op if unchanged)
 docker compose pull                                # fetch the latest image from ghcr
 docker compose up -d --force-recreate              # recreate with the newly pulled image
