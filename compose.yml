@@ -1,0 +1,44 @@
+# devsys — local Docker / OrbStack sample.
+#
+# Usage:
+#   1. cp .env.example .env
+#   2. edit .env — set the variables for the container(s) you want
+#   3. docker compose up -d
+#
+# Shell in:
+#   docker exec -it <host> zsh         # lands in ~/work
+#   tailscale ssh root@<host>          # once tailnet is joined
+#
+# To run two boxes side-by-side, uncomment the second service + its
+# variables in .env. Each box gets its own tailnet name and its own
+# persistent volume.
+
+services:
+
+  # ── First container ────────────────────────────────────────────────
+  dev1:
+    image: ghcr.io/amitpareek/devsys:latest
+    container_name: ${HOST1:?set HOST1 in .env}
+    hostname:       ${HOST1}                                # tailnet name
+    environment:
+      HOSTNAME:     ${HOST1}                                # must match `hostname`
+      TS_AUTHKEY:   ${TS_AUTHKEY1:?set TS_AUTHKEY1 in .env}
+    volumes:
+      - ${DATA1:-devsys-home-1}:/root                       # named volume by default
+    restart: unless-stopped
+
+  # ── Second container (uncomment to enable) ─────────────────────────
+  # dev2:
+  #   image: ghcr.io/amitpareek/devsys:latest
+  #   container_name: ${HOST2:?set HOST2 in .env}
+  #   hostname:       ${HOST2}
+  #   environment:
+  #     HOSTNAME:     ${HOST2}
+  #     TS_AUTHKEY:   ${TS_AUTHKEY2:?set TS_AUTHKEY2 in .env}
+  #   volumes:
+  #     - ${DATA2:-devsys-home-2}:/root
+  #   restart: unless-stopped
+
+volumes:
+  devsys-home-1:
+  # devsys-home-2:

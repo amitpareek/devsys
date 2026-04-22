@@ -217,7 +217,7 @@ on any Docker-capable host — Fly.io machines, Railway, a plain VPS, OrbStack
 locally, etc. No build, no config files.
 
 Templates:
-- **Compose** (local / VPS): [docker-compose.example.yml](./docker-compose.example.yml)
+- **Compose** (local / VPS): [compose.yml](./compose.yml) + [.env.example](./.env.example) — supports one or two containers in a single file
 - **Fly.io** (one always-on machine + volume, tailnet-only access): [fly.toml](./fly.toml)
 
 **Fastest Fly path** — the interactive script handles app / volume /
