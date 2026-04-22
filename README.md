@@ -231,42 +231,49 @@ name: devsys                                             # compose project — g
 
 services:
 
-  # ── First container: bhsys ────────────────────────────────────────
-  bhsys:
+  # ── First container ───────────────────────────────────────────────
+  box-a:
     image: ghcr.io/amitpareek/devsys:latest
-    container_name: &host1 bhsys                         # ← CHANGE: tailnet name
-    hostname: *host1
+    container_name: &host_a box-a                        # ← CHANGE: tailnet name
+    hostname: *host_a
     environment:
-      HOSTNAME: *host1
+      HOSTNAME: *host_a
       TS_AUTHKEY: ${TS_AUTHKEY:?set TS_AUTHKEY on the command line}
     volumes:
-      - bhsys-home:/root                                 # ← CHANGE (optional): /abs/host/path to bind-mount instead
+      - box-a-home:/root                                 # ← CHANGE (optional): /abs/host/path to bind-mount instead
+      - /Users/you/projects:/root/work                   # ← CHANGE: host projects folder visible at ~/work
     restart: unless-stopped
 
-  # ── Second container: cksys (uncomment to enable) ─────────────────
-  # cksys:
+  # ── Second container (uncomment to enable) ────────────────────────
+  # box-b:
   #   image: ghcr.io/amitpareek/devsys:latest
-  #   container_name: &host2 cksys
-  #   hostname: *host2
+  #   container_name: &host_b box-b
+  #   hostname: *host_b
   #   environment:
-  #     HOSTNAME: *host2
-  #     TS_AUTHKEY: ${TS_AUTHKEY_CKSYS:?set TS_AUTHKEY_CKSYS on the command line}
+  #     HOSTNAME: *host_b
+  #     TS_AUTHKEY: ${TS_AUTHKEY_B:?set TS_AUTHKEY_B on the command line}
   #   volumes:
-  #     - cksys-home:/root
+  #     - box-b-home:/root
+  #     - /Users/you/other-projects:/root/work
   #   restart: unless-stopped
 
 volumes:
-  bhsys-home:
-  # cksys-home:
+  box-a-home:
+  # box-b-home:
 ```
 
 - `name: devsys` is the **compose project name** — a label that groups
   the containers so `docker compose ps`, OrbStack UI, and similar tools
   show them together under "devsys".
-- Each service key (`bhsys`, `cksys`) is how you refer to a specific
-  container with compose subcommands (`docker compose logs -f bhsys`).
-- The `&host1` / `*host1` anchor ties `container_name`, docker
+- Each service key (`box-a`, `box-b`) is how you refer to a specific
+  container with compose subcommands (`docker compose logs -f box-a`).
+  Pick whatever names match your use (`beehive`, `cksys`, `devbox`, …).
+- The `&host_a` / `*host_a` anchor ties `container_name`, docker
   `hostname`, and the `HOSTNAME` env var together — edit the name once.
+- The second volume line bind-mounts a host projects folder into
+  `~/work` so your Mac IDE and the container share the same files.
+  Drop that line if you don't want host-side visibility; everything
+  still lives on the named volume.
 
 The compose file references `${TS_AUTHKEY}` (and `${TS_AUTHKEY_CKSYS}`
 for the second container) — the auth key isn't stored in the file.
@@ -277,7 +284,7 @@ works:
 # one-time per shell (or add to ~/.zshrc / ~/.bashrc)
 export TS_AUTHKEY=tskey-auth-xxxxxxxx
 # and for the second container, if you use it:
-# export TS_AUTHKEY_CKSYS=tskey-auth-yyyyyyyy
+# export TS_AUTHKEY_B=tskey-auth-yyyyyyyy
 
 # start / update
 docker compose up -d                               # create + start (or no-op if unchanged)
@@ -287,9 +294,9 @@ docker compose pull && docker compose up -d --force-recreate   # update in one g
 
 # observe
 docker compose ps                                  # what's running under project 'devsys'
-docker compose logs -f bhsys                       # follow entrypoint output for one service
-docker exec -it bhsys zsh                          # shell in (lands in /root/work)
-tailscale ssh root@bhsys                           # once tailnet is joined
+docker compose logs -f box-a                       # follow entrypoint output for one service
+docker exec -it box-a zsh                          # shell in (lands in /root/work)
+tailscale ssh root@box-a                           # once tailnet is joined
 
 # stop
 docker compose stop                                # stop, keep volumes + state
