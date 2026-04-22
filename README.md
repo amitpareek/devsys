@@ -269,23 +269,17 @@ volumes:
   `hostname`, and the `HOSTNAME` env var together — edit the name once.
 
 The compose file references `${TS_AUTHKEY}` (and `${TS_AUTHKEY_CKSYS}`
-for the second container) — the auth key isn't stored in the file; you
-pass it on the command line or keep it in your shell env. Compose errors
-out if it isn't set. Pattern:
+for the second container) — the auth key isn't stored in the file.
+Export it once in your shell, then every `docker compose` command just
+works:
 
 ```bash
-# one-shot (key lives only in the command)
-TS_AUTHKEY=tskey-auth-xxxxxxxx docker compose up -d
-
-# or export once per shell session
+# one-time per shell (or add to ~/.zshrc / ~/.bashrc)
 export TS_AUTHKEY=tskey-auth-xxxxxxxx
-docker compose up -d
-```
+# and for the second container, if you use it:
+# export TS_AUTHKEY_CKSYS=tskey-auth-yyyyyyyy
 
-Common commands (run from the directory holding `compose.yml`):
-
-```bash
-# start / update  (all need TS_AUTHKEY set in the env)
+# start / update
 docker compose up -d                               # create + start (or no-op if unchanged)
 docker compose pull                                # fetch the latest image from ghcr
 docker compose up -d --force-recreate              # recreate with the newly pulled image
