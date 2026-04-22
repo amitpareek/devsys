@@ -168,16 +168,20 @@ tagged `:latest`. Avoids QEMU emulation, ~10 min → ~3 min.
 
 ## Workflow conventions
 
+> **Every change lands in `CHANGES.md`. No exceptions.** Whenever you
+> edit any file in this repo — Dockerfile, scripts, docs, workflow,
+> even a typo fix — append an entry to the `## [Unreleased]` block at
+> the top of [CHANGES.md](./CHANGES.md) in the same commit. Use the
+> Keep a Changelog convention: `Added` / `Changed` / `Fixed` /
+> `Removed` subsections. When a version is cut, the `[Unreleased]`
+> block gets promoted to a dated heading `## YYYY-MM-DD — title`.
+> This is how future sessions know what happened without re-reading
+> the git log.
+
 **Push directly to `main`** — single contributor, no PR overhead. CI
 handles the publish. If a change is image-affecting, CI builds and
 pushes `ghcr.io/amitpareek/devsys:latest` in ~3 min; otherwise it
 skips.
-
-**Update `CHANGES.md` for every non-trivial change.** Append an entry
-to the `## [Unreleased]` block at the top (Keep a Changelog
-convention). Use `Added` / `Changed` / `Fixed` / `Removed`
-subsections. When ready to cut a version, the `[Unreleased]` block
-gets promoted to a dated heading `## YYYY-MM-DD — title`.
 
 **When you change `Dockerfile` or `entrypoint.sh`, rebuild locally
 and smoke-test before pushing.** The smoke-test snippet earlier in

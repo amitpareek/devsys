@@ -5,8 +5,13 @@ Dates are UTC. Format follows [Keep a Changelog](https://keepachangelog.com).
 
 ## [Unreleased]
 
-_(nothing yet — new work lands here, then gets a dated version heading when
-cut)_
+### Added
+
+- `CLAUDE.md` at repo root — architecture + conventions guide for
+  future Claude Code sessions. Covers the skel-seed lifecycle, root
+  rationale and `IS_SANDBOX=1` workaround, entrypoint parallelism,
+  `WORKDIR` rationale, flysetup name-derivation, CI matrix, and the
+  "every change updates `CHANGES.md`" rule.
 
 ---
 
