@@ -41,7 +41,7 @@ No keys, no port forwards, no VPN dance. **Only works from devices on your tailn
 
 ---
 
-**Contents:** [Required env](#required-environment-variables) · [Quick start](#quick-start) · [What's included](#whats-included) · [Obsidian](#obsidian-notes) · [.NET SDK](#optional--net-sdk) · [Persistence](#persistence) · [Cloud deployments](#cloud-deployments) · [Building](#building--publishing) · [Upgrading](#upgrading-from-an-older-image) · [Troubleshooting](#troubleshooting) · [Notes](#notes)
+**Contents:** [Required env](#required-environment-variables) · [Quick start](#quick-start) · [What's included](#whats-included) · [Obsidian](#obsidian-notes) · [.NET SDK](#optional--net-sdk) · [Persistence](#persistence) · [Cloud deployments](#cloud-deployments) · [Building](#building--publishing) · [Upgrading](#upgrading-from-an-older-image) · [Troubleshooting](#troubleshooting) · [Notes](#notes) · [Changelog](./CHANGES.md)
 
 ---
 
