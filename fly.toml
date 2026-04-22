@@ -19,24 +19,26 @@
 #
 # Bumping the image pulls ghcr.io/amitpareek/devsys:latest on next deploy.
 
-app            = "CHANGE-ME-devsys"
-primary_region = "ams"                     # pick any — see `fly platform regions`
+app            = "personal-devsys-cksys"
+primary_region = "bom"
 
 [build]
   image = "ghcr.io/amitpareek/devsys:latest"
 
 [env]
-  # Kernel + tailnet hostname. Must match `app` above (or whatever name
-  # you want the box to appear as on your tailnet).
-  HOSTNAME = "CHANGE-ME-devsys"
+  # Kernel + tailnet hostname. Independent of `app` above — the fly app
+  # name is globally unique (prefixed with org), but the tailnet name is
+  # whatever short label you want (e.g. `cksys`, reachable as
+  # `tailscale ssh dev@cksys`).
+  HOSTNAME = "cksys"
 
 # Single persistence volume. Shell history, tailscale state, AI auth,
 # redis data, ~/work files — everything lives here. Destroying the
 # volume resets the box.
 [[mounts]]
-  source       = "devsys_home"        # flysetup.sh rewrites this to devsys_<hostname>_vol
+  source       = "devsys_cksys_vol"
   destination  = "/home/dev"
-  initial_size = "10gb"
+  initial_size = "100gb"
 
 # One always-running machine. No auto-stop: a dev box should be reachable
 # whenever you ssh in. Bump memory if you hit OOMs with heavy builds.
