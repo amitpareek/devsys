@@ -33,6 +33,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       unzip rsync iputils-ping net-tools dnsutils \
       direnv tmux \
       redis-server \
+      postgresql-client \
       python3 python3-pip python3-venv \
     && ln -sf /usr/bin/fdfind /usr/local/bin/fd \
     && ln -sf /usr/bin/batcat /usr/local/bin/bat \
@@ -113,6 +114,7 @@ RUN curl -fsSL https://mise.run | sh \
       @google/gemini-cli \
       @openai/codex \
       opencode-ai \
+      obsidian-headless \
  && mkdir -p "$PNPM_HOME/store" "$PNPM_HOME/global" \
  && pnpm config set store-dir      "$PNPM_HOME/store" \
  && pnpm config set global-dir     "$PNPM_HOME/global" \
