@@ -19,22 +19,21 @@ ok()   { printf "${GREEN}[ok]${NC}  %s\n" "$*"; }
 warn() { printf "${YELLOW}[warn]${NC} %s\n" "$*"; }
 err()  { printf "${RED}[err]${NC}  %s\n" "$*" >&2; }
 
+# Plain ASCII prompts — ANSI escapes in the prompt string confuse the
+# terminal's cursor math, which breaks backspace in some shells/terms.
 ask() {
   local prompt="$1" default="${2:-}" reply
   if [ -n "$default" ]; then
-    read -rp "$(printf "${YELLOW}?${NC} %s [%s]: " "$prompt" "$default")" reply
-    echo "${reply:-$default}"
+    read -rp "? ${prompt} [${default}]: " reply
   else
-    read -rp "$(printf "${YELLOW}?${NC} %s: " "$prompt")" reply
-    echo "$reply"
+    read -rp "? ${prompt}: " reply
   fi
+  echo "${reply:-$default}"
 }
 
-# Visible read so paste works in all terminals. Pre-set TS_AUTHKEY in
-# env to skip entirely.
 ask_visible() {
   local prompt="$1" reply
-  read -rp "$(printf "${YELLOW}?${NC} %s: " "$prompt")" reply
+  read -rp "? ${prompt}: " reply
   echo "$reply"
 }
 
@@ -112,15 +111,20 @@ for r in "${REGIONS[@]}"; do
 done
 printf "  %2d. custom (type a code)\n" "$i"
 echo
+# No default for the region picker — an accidental Enter should re-prompt,
+# not silently pick #1.
 REGION=""
 while [ -z "$REGION" ]; do
-  REPLY=$(ask "Region #" "1")
+  read -rp "? Region # (1-$((${#REGIONS[@]}+1))): " REPLY
   if [[ "$REPLY" =~ ^[0-9]+$ ]] && [ "$REPLY" -ge 1 ] && [ "$REPLY" -le "${#REGIONS[@]}" ]; then
     REGION="${REGIONS[$((REPLY-1))]%%|*}"
+    ok "region: $REGION (${REGIONS[$((REPLY-1))]##*|})"
   elif [[ "$REPLY" =~ ^[0-9]+$ ]] && [ "$REPLY" -eq "$((${#REGIONS[@]}+1))" ]; then
-    REGION=$(ask "Region code (3 letters)" "")
+    read -rp "? Region code (3 letters): " REGION
+    REGION=$(echo "$REGION" | tr -cd 'a-z0-9')
+    [ -z "$REGION" ] && { warn "empty code"; REGION=""; }
   else
-    warn "Pick a number 1–$((${#REGIONS[@]}+1))"
+    warn "pick a number 1–$((${#REGIONS[@]}+1))"
   fi
 done
 
@@ -167,7 +171,27 @@ ok "fly.toml updated (backup at fly.toml.bak)"
 
 # ---- Fly resources ----------------------------------------------------------
 if fly apps list 2>/dev/null | awk '{print $1}' | grep -qx "$APP_NAME"; then
-  ok "app '$APP_NAME' already exists"
+  warn "app '$APP_NAME' already exists"
+  echo "  Options:"
+  echo "    [r] Redeploy against existing app  (default, keeps volume/secrets/state)"
+  echo "    [d] DELETE the app and recreate    (destructive — loses volume, secrets, everything)"
+  REPLY=$(ask "Choice [r/d]" "r")
+  case "$(echo "$REPLY" | tr '[:upper:]' '[:lower:]')" in
+    d|delete)
+      read -rp "! Type '$APP_NAME' to confirm destructive delete: " CONFIRM
+      if [ "$CONFIRM" = "$APP_NAME" ]; then
+        info "destroying app '$APP_NAME' ..."
+        fly apps destroy "$APP_NAME" --yes
+        info "Creating fresh app '$APP_NAME' in org '$ORG'..."
+        fly apps create "$APP_NAME" --org "$ORG"
+      else
+        warn "name mismatch — keeping existing app"
+      fi
+      ;;
+    *)
+      ok "reusing existing app"
+      ;;
+  esac
 else
   info "Creating app '$APP_NAME' in org '$ORG'..."
   fly apps create "$APP_NAME" --org "$ORG"
@@ -217,19 +241,42 @@ echo
 info "Deploying (single machine, immediate)..."
 fly deploy -a "$APP_NAME" --ha=false --now
 
-# Belt-and-suspenders: explicitly start any stopped machine.
-info "Ensuring machine is started..."
-fly machine list -a "$APP_NAME" --json 2>/dev/null \
-  | python3 -c "
+# Belt-and-suspenders: handle machines not in 'started' state.
+#   stopped  → fly machine start (simple transition)
+#   created  → deploy races leave machines stuck here; destroy + redeploy
+#   other    → report, leave for the user
+info "Checking machine state..."
+MACHINES_JSON=$(fly machine list -a "$APP_NAME" --json 2>/dev/null || echo '[]')
+NEED_REDEPLOY=0
+while IFS=$'\t' read -r MID STATE; do
+  [ -z "$MID" ] && continue
+  case "$STATE" in
+    started)
+      ok "machine $MID is started"
+      ;;
+    stopped)
+      info "machine $MID is stopped — starting"
+      fly machine start "$MID" -a "$APP_NAME" || warn "start failed"
+      ;;
+    created)
+      warn "machine $MID stuck in 'created' — destroying and redeploying"
+      fly machine destroy "$MID" -a "$APP_NAME" --force || true
+      NEED_REDEPLOY=1
+      ;;
+    *)
+      warn "machine $MID is in state '$STATE' — not auto-fixing. Inspect: fly status -a $APP_NAME"
+      ;;
+  esac
+done < <(echo "$MACHINES_JSON" | python3 -c "
 import sys, json
 for m in json.load(sys.stdin):
-    if m.get('state') != 'started':
-        print(m['id'])
-" 2>/dev/null \
-  | while read -r MID; do
-      [ -n "$MID" ] && fly machine start "$MID" -a "$APP_NAME" || true
-    done
-ok "machine is running"
+    print(m['id'], m.get('state','unknown'), sep='\t')
+" 2>/dev/null)
+
+if [ "$NEED_REDEPLOY" = "1" ]; then
+  info "Redeploying after clearing stuck machine(s)..."
+  fly deploy -a "$APP_NAME" --ha=false --now
+fi
 
 echo
 ok  "Done."
