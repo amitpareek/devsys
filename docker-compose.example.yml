@@ -1,0 +1,37 @@
+# devsys — minimal cloud-ready compose.
+#
+# Usage:
+#   docker run -d --restart=unless-stopped \
+#     -e HOSTNAME=my-dev-box \
+#     -e TS_AUTHKEY=tskey-auth-xxxxxxxx \
+#     -v devsys-home:/home/dev \
+#     ghcr.io/amitpareek/devsys:latest
+#
+# Or with this compose file:
+#   DEV_HOSTNAME=my-dev-box TS_AUTHKEY=tskey-auth-xxx docker compose up -d
+#
+# Persistence: everything lives under the single `devsys-home` volume,
+# mounted at /home/dev. Nuking this volume resets the box (shell history,
+# tailscale state, AI auth, redis data all go with it).
+#
+# Optional: bind-mount a host folder as the Obsidian vault at ~/vault.
+#
+# NOTE: DEV_HOSTNAME (not HOSTNAME) is used as the compose input variable
+# because $HOSTNAME on the host is auto-set by bash to the host's own
+# hostname — using that as a default would leak it into the container.
+
+services:
+  dev:
+    image: ghcr.io/amitpareek/devsys:latest
+    container_name: ${DEV_HOSTNAME:?set DEV_HOSTNAME}
+    environment:
+      HOSTNAME:   ${DEV_HOSTNAME}          # entrypoint applies to kernel + tailscale
+      TS_AUTHKEY: ${TS_AUTHKEY:?set TS_AUTHKEY}   # reusable tskey-auth-... recommended
+    restart: unless-stopped
+    volumes:
+      - devsys-home:/home/dev
+      # Optional: uncomment and point at a host Obsidian vault
+      # - ${HOME}/Documents/MyVault:/home/dev/vault
+
+volumes:
+  devsys-home:

@@ -1,0 +1,40 @@
+services:
+  dev:
+    image: devsys-base:latest
+    container_name: customer-b-dev
+    hostname: customer-b
+    restart: unless-stopped
+
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    devices:
+      - /dev/net/tun:/dev/net/tun
+
+    volumes:
+      - ./work:/home/dev/work
+      # Customer-B's Obsidian vault — Personal
+      - ./personal:/home/dev/vault
+      - customer-b-tailscale:/var/lib/tailscale
+      - customer-b-home-local:/home/dev/.local
+      - customer-b-home-config:/home/dev/.config
+      - customer-b-home-cache:/home/dev/.cache
+      - customer-b-home-claude:/home/dev/.claude
+      - customer-b-home-npm:/home/dev/.npm-global
+      - customer-b-home-bun:/home/dev/.bun
+      - customer-b-redis:/var/lib/redis
+      - customer-b-devsys-state:/var/lib/devsys-setup
+
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  customer-b-tailscale:
+  customer-b-home-local:
+  customer-b-home-config:
+  customer-b-home-cache:
+  customer-b-home-claude:
+  customer-b-home-npm:
+  customer-b-home-bun:
+  customer-b-redis:
+  customer-b-devsys-state:
