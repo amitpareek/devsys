@@ -1,180 +1,157 @@
-# devsys — reusable Ubuntu dev containers on Tailscale
+# devsys — all-inclusive Ubuntu dev container on Tailscale
 
-**Model:** one generic base image (`devsys-base`) shared across customers.
-Per-customer containers clone from the same image; first-boot setup configures
-them interactively.
+One image. Every dev tool baked in. Joins your tailnet on boot. One volume
+holds all persistent state.
 
-## Architecture
+**Image:** `ghcr.io/amitpareek/devsys:latest` (linux/amd64 + linux/arm64)
 
+## Quick start
+
+### 1. Get a Tailscale auth key
+
+https://login.tailscale.com/admin/settings/keys → **Generate auth key** →
+mark **Reusable** (so container restarts don't need a new key) → copy the
+`tskey-auth-…` string.
+
+If you want to tag the node (recommended for shared tailnets), attach a tag
+to the auth key when generating — e.g. `tag:devsys`.
+
+### 2. Configure the tailnet policy
+
+Edit https://login.tailscale.com/admin/acls/file.
+
+**Without tags** — simplest, node is owned by you:
+```json
+"ssh": [
+  {
+    "action": "accept",
+    "src":    ["autogroup:member"],
+    "dst":    ["autogroup:self"],
+    "users":  ["autogroup:nonroot", "root"]
+  }
+]
 ```
-~/dev-setup/
-  base/
-    Dockerfile              # builds devsys-base:latest
-    entrypoint.sh           # starts tailscaled (and redis if selected)
-    setup.sh                # interactive first-boot installer (baked in)
-    build.sh                # local build + optional Docker Hub push
-  customer-a/
-    docker-compose.yml      # uses devsys-base, mounts bsvault + volumes
-    work/                   # projects (bind-mount → ~/work in container)
-    bsvault/                # Obsidian vault (bind-mount → ~/vault)
-  customer-b/
-    docker-compose.yml      # mounts personal vault
-    work/
-    personal/               # Obsidian vault
-  README.md
+
+**With tags** — required if your auth key applies a tag (tagged nodes
+have no user-owner, so `autogroup:self` never matches):
+```json
+"tagOwners": {
+  "tag:devsys": ["autogroup:admin"]
+},
+"ssh": [
+  {
+    "action": "accept",
+    "src":    ["autogroup:member"],
+    "dst":    ["tag:devsys"],
+    "users":  ["autogroup:nonroot", "root"]
+  }
+]
 ```
 
-## One-time: build the base image
+Save the policy. A JSON error elsewhere in the file silently reverts the
+save — watch for the green "Saved" banner.
+
+### 3. Run the container
 
 ```bash
-cd ~/dev-setup/base
-./build.sh                  # tags devsys-base:latest locally
+export TS_AUTHKEY=tskey-auth-xxxxxxxx
+export HOST=my-devbox                # whatever you want on the tailnet
+
+docker run -d --restart=unless-stopped \
+  --name "$HOST" \
+  -e HOSTNAME="$HOST" \
+  -e TS_AUTHKEY="$TS_AUTHKEY" \
+  -v devsys-home:/home/dev \
+  ghcr.io/amitpareek/devsys:latest
 ```
 
-Optional — publish to Docker Hub for use on other machines:
-```bash
-docker login
-./build.sh push yourusername    # multi-arch, pushes to Docker Hub
-```
+Container refuses to start if either env var is missing.
 
-If you push, edit each `customer-*/docker-compose.yml` and change
-`image: devsys-base:latest` to `image: yourusername/devsys-base:latest`.
-
-## Per-container: start and run setup
-
-For each customer (`customer-a` or `customer-b`):
+### 4. Shell in
 
 ```bash
-cd ~/dev-setup/customer-a
-mkdir -p work bsvault        # or: work personal (for customer-b)
-docker compose up -d
+docker exec -it "$HOST" zsh          # always works, lands in ~/work
+tailscale ssh dev@"$HOST"            # from any tailnet device, once joined
 ```
 
-The container starts and waits. It has no tailnet presence yet.
+### Optional — Obsidian vault
 
-### First access: OrbStack UI
-
-1. Open OrbStack
-2. Find `customer-a-dev` in the Containers list
-3. Right-click → **Open Terminal** → choose `zsh`
-4. You're in as user `dev`. Run:
-
+Bind-mount a host vault at `~/vault` inside the container:
 ```bash
-setup.sh
+docker run ... -v ~/Documents/MyVault:/home/dev/vault ...
 ```
 
-The script will ask for:
-1. **Tailnet hostname** (default: container name, e.g. `customer-a`)
-2. **Which tools to install** — numbered checklist; enter numbers, `all`, or `none`
+## What's included
 
-It will run `tailscale up` and print a login URL — open it in your browser
-to approve the container on your tailnet.
+**Runtimes** Node LTS + Python 3.12 (via mise), Bun, pnpm
+**CLIs** gh, flyctl, neonctl, Claude Code, Gemini CLI, Codex CLI, opencode
+**Services** Redis (auto-starts on 127.0.0.1:6379)
+**Shell** zsh, starship, direnv, tmux, lazygit (`lg`), eza, bat, fd, rg, fzf, htop, ncdu, jq
+**Tailnet** tailscale + tailscaled (userspace-networking, `--ssh` enabled)
 
-After setup completes, `exit` the shell.
+The Claude alias has `--dangerously-skip-permissions` baked in since the
+container is isolated from the host.
 
-### Subsequent access: Tailscale SSH
+## Persistence
 
+One volume at `/home/dev` holds everything: shell history, tailscale state,
+AI tool auth, redis data, npm/pnpm/bun caches, your `~/work` files.
+
+On first boot the entrypoint seeds this volume from a snapshot baked into
+the image at `/etc/skel/devsys`. Subsequent boots see the sentinel file
+`~/.devsys-seeded` and skip the seed.
+
+Nuking the volume resets the box:
 ```bash
-tailscale ssh dev@customer-a
-tailscale ssh dev@customer-b
+docker stop "$HOST" && docker rm "$HOST"
+docker volume rm devsys-home
 ```
 
-You're in. No SSH keys to manage; auth flows through your tailnet identity.
+## Cloud deployments
 
-## Re-running setup.sh
+The whole model is "pull image, set two env vars, mount one volume". Works
+on any Docker-capable host — Fly.io machines, Railway, a plain VPS, OrbStack
+locally, etc. No build, no config files.
 
-The script is idempotent by design:
+Compose template: [docker-compose.example.yml](./docker-compose.example.yml).
 
+## Building / publishing
+
+`.github/workflows/docker.yml` builds multi-arch (amd64 + arm64) and pushes
+to `ghcr.io/amitpareek/devsys` on every push to `main` and on `v*` tags.
+
+Local build for your host arch:
 ```bash
-setup.sh                    # verify + repair: skips what's already working
-setup.sh --reconfigure      # re-prompt for hostname + tool selection
+docker build -t devsys:local .
 ```
 
-You can also SSH in later and run `setup.sh` to **add** tools you skipped
-originally — use `--reconfigure`, pick the superset, and only the new ones
-will actually install.
+## Troubleshooting
 
-## What gets installed (the checklist)
+**`tailnet policy does not permit you to SSH to this node`** — the tailnet
+ACL doesn't have an SSH rule matching this node. See step 2 above. Tag
+mismatch is the usual cause.
 
-Grouped in the prompt:
+**`FATAL: HOSTNAME env var is required`** — you didn't pass `-e HOSTNAME=...`.
 
-**Runtimes** — Node.js LTS, Python 3.12, Bun, pnpm
-**CLIs** — gh, flyctl, neonctl, Claude Code, Gemini CLI, Codex CLI, opencode
-**Services** — Redis (auto-starts on boot if selected)
-**Shell & utilities** — modern CLI bundle (ripgrep, fd, bat, fzf, eza, htop,
-ncdu, jq), starship, direnv, tmux, lazygit
-**Knowledge / notes** — obsidian-export, glow
+**`FATAL: TS_AUTHKEY env var is required`** — you didn't pass
+`-e TS_AUTHKEY=...`. Key must be valid and not expired.
 
-## Obsidian — how the Mac + container integration works
+**Container exits after `tailscale up failed`** — check the key isn't
+consumed (single-use keys can only be used once) or revoked.
 
-Vaults live on the **Mac** (so Obsidian GUI on macOS edits them normally) and
-are bind-mounted into their respective container at `~/vault`.
-
-- **Customer A** container sees `bsvault` (from `~/dev-setup/customer-a/bsvault/`)
-- **Customer B** container sees `personal` (from `~/dev-setup/customer-b/personal/`)
-
-On the Mac, in Obsidian:
-- "Open folder as vault" → `~/dev-setup/customer-a/bsvault`
-- Do the same for `~/dev-setup/customer-b/personal`
-
-Inside the containers, CLI tools (obsidian-export, glow, rg, bat) operate on
-the same files — so you can search, export, or view notes from either side.
-
-## Directory defaults (no drift)
-
-The setup script sets these explicitly so re-runs don't change anything:
-
-| Tool   | Location                          |
-|--------|-----------------------------------|
-| npm    | `~/.npm-global` (via NPM_CONFIG_PREFIX) |
-| pnpm   | `~/.local/share/pnpm` (PNPM_HOME) |
-| Bun    | `~/.bun` (BUN_INSTALL)            |
-| mise   | `~/.local/share/mise` (MISE_DATA_DIR) |
-| flyctl | `~/.fly`, symlinked into `~/.local/bin` |
-
-All of these paths are on volumes, so they survive container rebuilds.
-
-## Daily operations
-
-| Task | Command |
-|------|---------|
-| SSH in | `tailscale ssh dev@customer-a` |
-| Shell via OrbStack | right-click container → Open Terminal |
-| Add more tools | `setup.sh --reconfigure` (inside container) |
-| Restart container | `cd customer-a && docker compose restart` |
-| Rebuild container | `cd customer-a && docker compose up -d --force-recreate` |
-| Update base image | `cd base && ./build.sh` then rebuild containers |
-| Container logs | `docker logs -f customer-a-dev` |
-| Stop | `cd customer-a && docker compose down` |
-| Nuke container + volumes | `cd customer-a && docker compose down -v` (loses tailscale session, history, AI auth, redis data) |
-
-## Adding a third customer
-
-```bash
-cd ~/dev-setup
-cp -r customer-a customer-c
-# Edit customer-c/docker-compose.yml:
-#   container_name: customer-c-dev
-#   hostname: customer-c
-#   ./<vault>:/home/dev/vault   (pick a vault name)
-#   rename all `customer-a-*` volumes to `customer-c-*`
-cd customer-c
-mkdir -p work
-docker compose up -d
-# Open via OrbStack UI, run setup.sh, enter hostname 'customer-c'
-```
+**`tailscale status` shows the node as `tagged-devices`** — your auth key
+applies a tag but `tagOwners` doesn't declare it, or your SSH rule still
+uses `autogroup:self`. See "With tags" above.
 
 ## Notes
 
-- **Tailscale ACL**: make sure your tailnet policy includes an `ssh` rule
-  allowing user `dev` (or `autogroup:nonroot`). See:
-  https://login.tailscale.com/admin/acls
-- **Mac sleep**: containers unreachable while Mac sleeps.
-  Disable: `sudo pmset -a sleep 0 disablesleep 1`
-- **`--dangerously-skip-permissions` on claude**: aliased in zshrc.
-  Removes prompts before file edits / bash. Scope is contained to
-  `~/work` inside the container. Remove the alias to re-enable prompts.
-- **Redis isolation**: per-container, bound to 127.0.0.1. Customer A's Redis
-  is not visible to Customer B or to the tailnet.
 - **MagicDNS**: enable at https://login.tailscale.com/admin/dns so bare
-  `customer-a` resolves. Until then use full `customer-a.tailXXXX.ts.net`.
+  `my-devbox` resolves without the full `.tailXXXX.ts.net` suffix.
+- **Mac sleep**: a container on your Mac is unreachable while the Mac
+  sleeps. Disable: `sudo pmset -a sleep 0 disablesleep 1`.
+- **Redis isolation**: per-container, bound to 127.0.0.1 — not visible on
+  the tailnet.
+- Legacy files kept for reference: [Dockerfile.old](./Dockerfile.old),
+  [entrypoint.old.sh](./entrypoint.old.sh), [setup.sh](./setup.sh),
+  [build.sh](./build.sh), [customer-a.docker-compose.yml](./customer-a.docker-compose.yml),
+  [customer-b.docker-compose.yml](./customer-b.docker-compose.yml).
