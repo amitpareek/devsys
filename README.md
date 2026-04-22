@@ -83,23 +83,94 @@ docker run ... -v ~/Documents/MyVault:/home/dev/vault ...
 
 ## What's included
 
-**Runtimes** Node LTS + Python 3.12 (via mise), Bun, pnpm
-**CLIs** gh, flyctl, neonctl, Claude Code, Gemini CLI, Codex CLI, opencode
-**Services** Redis (auto-starts on 127.0.0.1:6379)
-**Shell** zsh, starship, direnv, tmux, lazygit (`lg`), eza, bat, fd, rg, fzf, htop, ncdu, jq
-**Tailnet** tailscale + tailscaled (userspace-networking, `--ssh` enabled)
+Every tool listed below is pre-installed in the image. No first-boot
+`setup.sh`, no picking and choosing — everything is available the moment
+you shell in.
 
-The Claude alias has `--dangerously-skip-permissions` baked in since the
-container is isolated from the host.
+### Runtimes (managed by `mise`)
+| Tool | Binary | Source |
+|---|---|---|
+| Node.js LTS | `node`, `npm`, `npx` | mise → official Node builds |
+| Python 3.12 | `python3`, `pip3` | mise → python-build-standalone |
+| Bun | `bun`, `bunx` | `bun.sh/install` |
+| pnpm | `pnpm` | `npm install -g pnpm` |
+
+### CLIs
+| Tool | Binary | Notes |
+|---|---|---|
+| GitHub CLI | `gh` | apt `cli.github.com` |
+| Fly.io | `flyctl`, `fly` | `fly.io/install.sh` → `/opt/fly` |
+| Neon | `neonctl` | npm global |
+| Claude Code | `claude` | npm `@anthropic-ai/claude-code`, aliased to `claude --dangerously-skip-permissions` |
+| Gemini CLI | `gemini` | npm `@google/gemini-cli` |
+| Codex CLI | `codex` | npm `@openai/codex` |
+| opencode | `opencode` | npm `opencode-ai` |
+| obsidian-headless | `ob` | npm `obsidian-headless` — Obsidian's official headless Sync client |
+| PostgreSQL client | `psql`, `pg_dump`, `pg_restore`, `pg_isready` | apt `postgresql-client` |
+
+### Services (auto-start on container boot)
+| Service | Port | Data dir |
+|---|---|---|
+| Redis | `127.0.0.1:6379` | `~/.local/state/redis` |
+| Tailscale (`tailscaled`) | — (userspace-networking) | `~/.local/state/tailscale` |
+
+### Shell & modern CLI bundle
+| Category | Binaries |
+|---|---|
+| Shell | `zsh`, `bash` |
+| Prompt | `starship` |
+| Modern unix | `eza` (`ls`, `ll`, `tree` aliases), `bat` (`cat` alias), `fd`, `rg` (ripgrep), `fzf` |
+| Monitoring | `htop`, `ncdu` |
+| Misc | `jq`, `direnv`, `tmux`, `lazygit` (alias `lg`), `glow` |
+| Net / dev | `git`, `curl`, `wget`, `sudo`, `openssh-client`, `iputils-ping`, `dnsutils`, `net-tools`, `rsync`, `unzip`, `build-essential`, `pkg-config` |
+
+### Tailnet
+- `tailscale`, `tailscaled` — `--ssh` enabled on first boot, userspace-networking (no `NET_ADMIN` capability needed).
+
+All npm-installed CLIs live at `~/.npm-global/bin/`, which is on PATH by
+default. mise shims are in `~/.local/share/mise/shims/`.
+
+## Obsidian (headless)
+
+`obsidian-headless` (binary: `ob`) is the official CLI client for Obsidian
+Sync. It works without a GUI/display server, unlike the desktop CLI that
+ships in the Obsidian installer.
+
+Typical sync flow:
+```bash
+ob login                          # paste Obsidian Sync credentials
+ob sync-list-remote               # show vaults on your account
+ob sync-setup --help              # see how to point a local path at a remote vault
+ob sync --help                    # run a sync (one-shot or continuous)
+ob sync-status                    # check sync state of a local vault
+```
+
+Publish flow (for Obsidian Publish):
+```bash
+ob publish-list-sites
+ob publish-setup --help
+ob publish
+```
+
+All subcommands: `login`, `logout`, `sync-list-remote`, `sync-list-local`,
+`sync-create-remote`, `sync-setup`, `sync-config`, `sync-status`,
+`sync-unlink`, `sync`, `publish-list-sites`, `publish-create-site`,
+`publish-setup`, `publish`, `publish-config`, `publish-site-options`,
+`publish-unlink`. Run `ob <cmd> --help` for options on any of them.
+
+Requires an Obsidian Sync subscription — sync is a paid add-on, not part
+of the free tier.
 
 ## Persistence
 
 One volume at `/home/dev` holds everything: shell history, tailscale state,
 AI tool auth, redis data, npm/pnpm/bun caches, your `~/work` files.
 
-On first boot the entrypoint seeds this volume from a snapshot baked into
-the image at `/etc/skel/devsys`. Subsequent boots see the sentinel file
-`~/.devsys-seeded` and skip the seed.
+On every boot the entrypoint tops up this volume from a snapshot baked
+into the image at `/etc/skel/devsys` using `rsync --ignore-existing`.
+First boot performs the full ~1.9 GB copy; subsequent boots are near-
+instant and add only new files from a freshly-pulled image. Files you
+edit on the volume are never overwritten.
 
 Nuking the volume resets the box:
 ```bash
