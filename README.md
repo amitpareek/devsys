@@ -175,6 +175,40 @@ All subcommands: `login`, `logout`, `sync-list-remote`, `sync-list-local`,
 Requires an Obsidian Sync subscription — sync is a paid add-on, not part
 of the free tier.
 
+## Optional — .NET SDK
+
+Not baked into the image (saves ~700 MB for everyone who doesn't need
+it). When you want it, run this **inside the container** as the `dev`
+user. Installs to `~/.dotnet`, no `sudo` needed, works on amd64 + arm64.
+
+```bash
+# LTS (.NET 8 — support through Nov 2026)
+curl -fsSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel LTS
+
+# or latest stable (.NET 9)
+curl -fsSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel STS
+
+# expose dotnet on PATH permanently
+cat >> ~/.zshenv <<'EOF'
+export DOTNET_ROOT="$HOME/.dotnet"
+path=("$DOTNET_ROOT" "$DOTNET_ROOT/tools" $path)
+EOF
+exec zsh          # reload
+
+dotnet --info     # verify
+```
+
+Optional EF Core CLI:
+```bash
+dotnet tool install -g dotnet-ef
+```
+
+Install both LTS and STS side-by-side by running the install script twice
+with different `--channel` values — they share `~/.dotnet`.
+
+Everything lives under `~/.dotnet`, which is on the persistent volume, so
+the install survives container restarts / image updates.
+
 ## Persistence
 
 One volume at `/home/dev` holds everything: shell history, tailscale state,
