@@ -37,6 +37,8 @@ Same hostname works in **Cursor** or **VS Code** — `Remote-SSH: Connect to Hos
 
 No keys, no port forwards, no VPN dance. **Only works from devices on your tailnet** — the box never exposes a public port. Disable key expiry for the node at https://login.tailscale.com/admin/machines (⋯ → "Disable key expiry") so it doesn't fall off the tailnet every 180 days.
 
+> **Tip — skip expiry entirely with a tag.** A tagged auth key (or tagged machine) never expires. **Prefer tagging the key** when you generate it (e.g. `tag:devsys`) so every container that boots with that key inherits the tag and non-expiring status. If tailnet SSH breaks after adding a tag, the ACL likely doesn't declare the tag owner or still uses `autogroup:self` — see the **With tags** block in [Quick start → step 2](#2-configure-the-tailnet-policy).
+
 ---
 
 **Contents:** [Required env](#required-environment-variables) · [Quick start](#quick-start) · [What's included](#whats-included) · [Obsidian](#obsidian-notes) · [.NET SDK](#optional--net-sdk) · [Persistence](#persistence) · [Cloud deployments](#cloud-deployments) · [Building](#building--publishing) · [Upgrading](#upgrading-from-an-older-image) · [Troubleshooting](#troubleshooting) · [Notes](#notes)
