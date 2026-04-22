@@ -261,11 +261,25 @@ volumes:
 The `&host1` / `*host1` anchor ties container_name, docker hostname,
 and the `HOSTNAME` env var together — edit the name once.
 
-Start, shell in, verify tailnet:
+Common commands (run from the directory holding `compose.yml`):
+
 ```bash
-docker compose up -d
-docker exec -it my-devbox zsh           # lands in /root/work
-tailscale ssh root@my-devbox            # once tailnet is joined
+# start / update
+docker compose up -d                               # create + start (or no-op if unchanged)
+docker compose pull                                # fetch the latest image from ghcr
+docker compose up -d --force-recreate              # recreate with the newly pulled image
+docker compose pull && docker compose up -d --force-recreate   # update in one go
+
+# observe
+docker compose ps                                  # what's running
+docker compose logs -f dev1                        # follow entrypoint output
+docker exec -it my-devbox zsh                      # shell in (lands in /root/work)
+tailscale ssh root@my-devbox                       # once tailnet is joined
+
+# stop
+docker compose stop                                # stop, keep volumes + state
+docker compose down                                # stop + remove containers, keep volumes
+docker compose down -v                             # ALSO wipe volumes (destroys the box)
 ```
 
 **Fastest Fly path** — the interactive script handles app / volume /
