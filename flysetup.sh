@@ -30,9 +30,11 @@ ask() {
 }
 
 ask_secret() {
+  # Visible read: some terminals block paste into silent reads, which is
+  # painful for long auth keys. If you'd rather not echo, pre-set the
+  # env var before running: TS_AUTHKEY=... ./flysetup.sh
   local prompt="$1" reply
-  read -rsp "$(printf "${YELLOW}?${NC} %s: " "$prompt")" reply
-  echo >&2   # newline after hidden input
+  read -rp "$(printf "${YELLOW}?${NC} %s: " "$prompt")" reply
   echo "$reply"
 }
 
@@ -65,7 +67,14 @@ VOL_NAME="devsys_${SAFE_HOST}_vol"
 
 REGION=$(ask   "Primary region (see: fly platform regions)" "ams")
 VOL_SIZE=$(ask "Persistent volume size in GB" "10")
-TS_AUTHKEY=$(ask_secret "Tailscale auth key (tskey-auth-...)")
+
+# Use env-provided TS_AUTHKEY if present (so you can pipe it in from a
+# password manager); otherwise prompt.
+if [ -n "${TS_AUTHKEY:-}" ]; then
+  ok "TS_AUTHKEY picked up from environment (not prompting)"
+else
+  TS_AUTHKEY=$(ask_secret "Tailscale auth key (tskey-auth-...)")
+fi
 
 if [ -z "$TS_AUTHKEY" ]; then
   err "TS_AUTHKEY is required."
