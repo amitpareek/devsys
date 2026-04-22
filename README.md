@@ -17,7 +17,7 @@ these two. The container refuses to start without them.
 
 The only other thing you need is a **persistent volume** mounted at
 `/root` inside the container (everything — tailscale state, shell
-history, AI auth, redis data, your `~/work`/`~/vault` — lives there).
+history, AI auth, redis data, your `~/work` — lives there).
 
 ## Quick start
 
@@ -93,11 +93,12 @@ All three drop you into the same environment: root shell, zsh with
 starship/aliases, cwd = `~/work`. There's only one user (root) inside
 the container, so the different access paths don't drift.
 
-### Optional — Obsidian vault
+### Optional — bind-mount a project for IDE editing
 
-Bind-mount a host vault at `~/vault` inside the container:
+Mount any host folder inside `~/work` so a Mac IDE can edit it while
+the container runs it:
 ```bash
-docker run ... -v ~/Documents/MyVault:/root/vault ...
+docker run ... -v ~/Work/myproject:/root/work/myproject ...
 ```
 
 ## What's included

@@ -14,7 +14,8 @@
 # mounted at /root. Nuking this volume resets the box (shell history,
 # tailscale state, AI auth, redis data all go with it).
 #
-# Optional: bind-mount a host folder as the Obsidian vault at ~/vault.
+# Optional: bind-mount a host folder inside ~/work for dual-edit with
+# a Mac IDE.
 #
 # NOTE: DEV_HOSTNAME (not HOSTNAME) is used as the compose input variable
 # because $HOSTNAME on the host is auto-set by bash to the host's own
@@ -30,8 +31,8 @@ services:
     restart: unless-stopped
     volumes:
       - devsys-home:/root
-      # Optional: uncomment and point at a host Obsidian vault
-      # - ${HOME}/Documents/MyVault:/root/vault
+      # Optional: bind-mount a project folder so your Mac IDE can edit it
+      # - ${HOME}/Work/myproject:/root/work/myproject
 
 volumes:
   devsys-home:

@@ -22,7 +22,7 @@
 #   fly machine restart <id>          # reload entrypoint / image pull
 
 app            = "personal-devsys-flycksys"
-primary_region = "bom"
+primary_region = "fra"
 
 [build]
   image = "ghcr.io/amitpareek/devsys:latest"
