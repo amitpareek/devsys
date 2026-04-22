@@ -58,10 +58,20 @@ echo
 # ---- Prompts ----------------------------------------------------------------
 printf "${BOLD}devsys → Fly.io setup${NC}\n\n"
 
-HOSTNAME_INPUT=$(ask "Hostname (doubles as fly app name and tailnet name)" "my-devsys")
-APP_NAME="$HOSTNAME_INPUT"
+# Auto-detect default org (the first one in `fly orgs list`, usually your
+# personal one). User can override.
+DEFAULT_ORG=$(fly orgs list --json 2>/dev/null \
+  | python3 -c "import sys,json; d=json.load(sys.stdin); print(next(iter(d))) if d else print('personal')" \
+  2>/dev/null || echo personal)
 
-# Fly volume names allow only [a-z0-9_]. Replace anything else with '_'.
+ORG=$(ask "Fly org slug (prefix for the app name)" "$DEFAULT_ORG")
+HOSTNAME_INPUT=$(ask "Hostname (tailnet name — just the short part, e.g. cksys)" "devbox")
+
+# Fly app names are global and must match [a-z0-9-]. Sanitize for safety.
+APP_NAME=$(echo "${ORG}-devsys-${HOSTNAME_INPUT}" \
+  | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9-' '-' | sed 's/-\{2,\}/-/g; s/^-//; s/-$//')
+
+# Fly volume names only allow [a-z0-9_]. Base on the hostname.
 SAFE_HOST=$(echo "$HOSTNAME_INPUT" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_' '_')
 VOL_NAME="devsys_${SAFE_HOST}_vol"
 
@@ -87,10 +97,11 @@ esac
 
 echo
 info "Plan:"
-echo "  hostname / app = $APP_NAME"
+echo "  org            = $ORG"
+echo "  hostname       = $HOSTNAME_INPUT"
+echo "  fly app        = $APP_NAME"
 echo "  region         = $REGION"
 echo "  volume         = $VOL_NAME (${VOL_SIZE}GB)"
-echo "  ts authkey     = (hidden)"
 echo
 read -rp "$(printf "${YELLOW}?${NC} Proceed? [Y/n]: ")" CONFIRM
 case "${CONFIRM:-Y}" in [Yy]*|"") : ;; *) err "aborted"; exit 1 ;; esac
@@ -107,7 +118,7 @@ if sed --version >/dev/null 2>&1; then SED_I=(-i); else SED_I=(-i ''); fi
 sed "${SED_I[@]}" \
   -e "s|^app\( *\)=.*|app            = \"$APP_NAME\"|" \
   -e "s|^primary_region\( *\)=.*|primary_region = \"$REGION\"|" \
-  -e "s|^  HOSTNAME = .*|  HOSTNAME = \"$APP_NAME\"|" \
+  -e "s|^  HOSTNAME = .*|  HOSTNAME = \"$HOSTNAME_INPUT\"|" \
   -e "s|^  source       = .*|  source       = \"$VOL_NAME\"|" \
   -e "s|^  initial_size = .*|  initial_size = \"${VOL_SIZE}gb\"|" \
   fly.toml
@@ -117,8 +128,8 @@ ok "fly.toml updated (backup at fly.toml.bak)"
 if fly apps list 2>/dev/null | awk '{print $1}' | grep -qx "$APP_NAME"; then
   ok "app '$APP_NAME' already exists"
 else
-  info "Creating app '$APP_NAME'..."
-  fly apps create "$APP_NAME"
+  info "Creating app '$APP_NAME' in org '$ORG'..."
+  fly apps create "$APP_NAME" --org "$ORG"
 fi
 
 VOLS_JSON=$(fly volumes list -a "$APP_NAME" --json 2>/dev/null || echo '[]')
