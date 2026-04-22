@@ -65,17 +65,65 @@ DEFAULT_ORG=$(fly orgs list --json 2>/dev/null \
   2>/dev/null || echo personal)
 
 ORG=$(ask "Fly org slug (prefix for the app name)" "$DEFAULT_ORG")
-HOSTNAME_INPUT=$(ask "Hostname (tailnet name — just the short part, e.g. cksys)" "devbox")
 
-# Fly app names are global and must match [a-z0-9-]. Sanitize for safety.
+# Hostname: lowercase, alphanumeric + underscore only. Re-prompt on invalid.
+HOSTNAME_INPUT=""
+while [ -z "$HOSTNAME_INPUT" ]; do
+  HOSTNAME_INPUT=$(ask "Hostname (lowercase, a-z 0-9 _ only — e.g. cksys)" "devbox")
+  if ! printf '%s' "$HOSTNAME_INPUT" | grep -qE '^[a-z0-9_]+$'; then
+    err "'$HOSTNAME_INPUT' — only a-z, 0-9, and _ are allowed."
+    HOSTNAME_INPUT=""
+  fi
+done
+
+# Fly app names must match [a-z0-9-]. Sanitize (underscores in hostname
+# become hyphens in the app name for DNS-friendliness).
 APP_NAME=$(echo "${ORG}-devsys-${HOSTNAME_INPUT}" \
-  | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9-' '-' | sed 's/-\{2,\}/-/g; s/^-//; s/-$//')
+  | tr '[:upper:]' '[:lower:]' | tr '_' '-' | tr -c 'a-z0-9-' '-' | sed 's/-\{2,\}/-/g; s/^-//; s/-$//')
 
-# Fly volume names only allow [a-z0-9_]. Base on the hostname.
-SAFE_HOST=$(echo "$HOSTNAME_INPUT" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_' '_')
-VOL_NAME="devsys_${SAFE_HOST}_vol"
+# Fly volume names accept [a-z0-9_] — hostname is already safe.
+VOL_NAME="devsys_${HOSTNAME_INPUT}_vol"
 
-REGION=$(ask   "Primary region (see: fly platform regions)" "ams")
+# Region — pick from a curated list of common fly regions. Type 'custom'
+# to enter anything else (full list: fly platform regions).
+echo
+echo -e "${BOLD}Region:${NC}"
+REGIONS=(
+  "ams|Amsterdam, Netherlands"
+  "bom|Mumbai, India"
+  "cdg|Paris, France"
+  "dfw|Dallas, Texas"
+  "fra|Frankfurt, Germany"
+  "iad|Ashburn, Virginia (US East)"
+  "lax|Los Angeles, California"
+  "lhr|London, UK"
+  "nrt|Tokyo, Japan"
+  "ord|Chicago, Illinois"
+  "sea|Seattle, Washington"
+  "sin|Singapore"
+  "syd|Sydney, Australia"
+  "yyz|Toronto, Canada"
+)
+i=1
+for r in "${REGIONS[@]}"; do
+  printf "  %2d. %-4s  %s\n" "$i" "${r%%|*}" "${r##*|}"
+  i=$((i+1))
+done
+printf "  %2d. custom (type a code)\n" "$i"
+echo
+REGION=""
+while [ -z "$REGION" ]; do
+  REPLY=$(ask "Region #" "1")
+  if [[ "$REPLY" =~ ^[0-9]+$ ]] && [ "$REPLY" -ge 1 ] && [ "$REPLY" -le "${#REGIONS[@]}" ]; then
+    REGION="${REGIONS[$((REPLY-1))]%%|*}"
+  elif [[ "$REPLY" =~ ^[0-9]+$ ]] && [ "$REPLY" -eq "$((${#REGIONS[@]}+1))" ]; then
+    REGION=$(ask "Region code (3 letters)" "")
+    [ -z "$REGION" ] && REGION=""
+  else
+    warn "Pick a number 1–$((${#REGIONS[@]}+1))"
+  fi
+done
+
 VOL_SIZE=$(ask "Persistent volume size in GB" "10")
 
 # Use env-provided TS_AUTHKEY if present (so you can pipe it in from a
