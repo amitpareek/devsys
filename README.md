@@ -161,7 +161,7 @@ you shell in.
 | GitHub CLI | `gh` | apt `cli.github.com` |
 | Fly.io | `flyctl`, `fly` | `fly.io/install.sh` → `/opt/fly` |
 | Neon | `neonctl` | npm global |
-| Claude Code | `claude` | npm `@anthropic-ai/claude-code`. Pre-configured `~/.claude/settings.json` with exhaustive allow-list (no `--dangerously-skip-permissions` — that flag refuses as root). |
+| Claude Code | `claude` | npm `@anthropic-ai/claude-code`. `~/.claude/settings.json` uses `bypassPermissions` + `IS_SANDBOX=1` — the container-sandbox escape hatch that makes Claude skip its root guard. Zero prompts. |
 | Gemini CLI | `gemini` | npm `@google/gemini-cli`. Aliased to `gemini --yolo` (auto-approve all) + `~/.gemini/settings.json` sets `auto_edit` fallback. |
 | Codex CLI | `codex` | npm `@openai/codex`. Aliased to `codex --dangerously-bypass-approvals-and-sandbox` + `~/.codex/config.toml` sets `approval_policy=never` + `sandbox_mode=danger-full-access`. |
 | opencode | `opencode` | npm `opencode-ai` |

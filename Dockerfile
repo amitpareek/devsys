@@ -157,31 +157,19 @@ RUN chsh -s /bin/zsh root
 # .zshrc below) since those flags don't refuse as root. Claude's flag
 # DOES refuse as root, so we lean entirely on settings.json for it.
 
-# Claude Code — user-level permissions allow-list. Applies to every project.
+# Claude Code — full bypass. IS_SANDBOX=1 is Claude's documented signal
+# for "this is an intentionally-isolated container, skip the root guard",
+# which enables defaultMode "bypassPermissions" even as root.
+# No allow-list needed, no prompts for anything.
 RUN mkdir -p /root/.claude \
  && cat > /root/.claude/settings.json <<'JSON'
 {
   "permissions": {
-    "defaultMode": "acceptEdits",
-    "allow": [
-      "Bash",       "Bash(*)",
-      "Edit",       "Edit(*)",
-      "MultiEdit",  "MultiEdit(*)",
-      "Write",      "Write(*)",
-      "Read",       "Read(*)",
-      "Glob",       "Glob(*)",
-      "Grep",       "Grep(*)",
-      "Task",       "Task(*)",
-      "Agent",      "Agent(*)",
-      "WebFetch",   "WebFetch(*)",
-      "WebSearch",  "WebSearch(*)",
-      "NotebookEdit","NotebookEdit(*)",
-      "TodoWrite",  "TodoWrite(*)",
-      "ExitPlanMode","ExitPlanMode(*)",
-      "Skill",      "Skill(*)",
-      "mcp__*"
-    ],
+    "defaultMode": "bypassPermissions",
     "deny": []
+  },
+  "env": {
+    "IS_SANDBOX": "1"
   }
 }
 JSON
