@@ -99,8 +99,8 @@ RUN curl -fsSL https://mise.run | sh \
  && pnpm config set global-bin-dir "$PNPM_HOME" \
  && curl -fsSL https://bun.sh/install | bash
 
-# ---- Shell config + work/vault dirs ----------------------------------------
-RUN mkdir -p /root/work /root/vault \
+# ---- Shell config + work dir ----------------------------------------------
+RUN mkdir -p /root/work \
  && cat > /root/.zshenv <<'ZSHENV'
 typeset -U path PATH
 path=(
@@ -138,6 +138,11 @@ alias claude='claude --dangerously-skip-permissions'
 cd ~/work 2>/dev/null || true
 ZSHRC
 
+# .zlogin runs AFTER .zshrc for login shells. Some terminal wrappers
+# (e.g. OrbStack's UI shell) reset pwd after .zshrc but before the
+# prompt, so put the cd here too as a belt-and-suspenders.
+RUN echo 'cd ~/work 2>/dev/null || true' > /root/.zlogin
+
 # Use zsh as root's login shell.
 RUN chsh -s /bin/zsh root
 
@@ -151,7 +156,7 @@ RUN mkdir -p /etc/skel \
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
-RUN printf '\n  devsys — all-inclusive dev container\n  work dir: ~/work   vault (optional): ~/vault\n\n' > /etc/motd
+RUN printf '\n  devsys — all-inclusive dev container\n  work dir: ~/work\n\n' > /etc/motd
 
 EXPOSE 6379
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
