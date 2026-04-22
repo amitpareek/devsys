@@ -36,6 +36,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       python3 python3-pip python3-venv \
     && ln -sf /usr/bin/fdfind /usr/local/bin/fd \
     && ln -sf /usr/bin/batcat /usr/local/bin/bat \
+    && (userdel -r ubuntu 2>/dev/null || true) \
     && groupadd --gid ${USER_GID} ${USERNAME} \
     && useradd --uid ${USER_UID} --gid ${USER_GID} -m -s /bin/zsh ${USERNAME} \
     && usermod -aG sudo ${USERNAME} \
