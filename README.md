@@ -184,7 +184,13 @@ The whole model is "pull image, set two env vars, mount one volume". Works
 on any Docker-capable host — Fly.io machines, Railway, a plain VPS, OrbStack
 locally, etc. No build, no config files.
 
-Compose template: [docker-compose.example.yml](./docker-compose.example.yml).
+Templates:
+- **Compose** (local / VPS): [docker-compose.example.yml](./docker-compose.example.yml)
+- **Fly.io** (one always-on machine + volume, tailnet-only access): [fly.toml](./fly.toml)
+
+For Fly: edit the `app` + `HOSTNAME` fields, `fly volumes create devsys_home --size 10`,
+`fly secrets set TS_AUTHKEY=...`, then `fly deploy`. The Machine never
+publishes a port — all access is through `tailscale ssh`.
 
 ## Building / publishing
 
@@ -222,7 +228,5 @@ uses `autogroup:self`. See "With tags" above.
   sleeps. Disable: `sudo pmset -a sleep 0 disablesleep 1`.
 - **Redis isolation**: per-container, bound to 127.0.0.1 — not visible on
   the tailnet.
-- Legacy files kept for reference: [Dockerfile.old](./Dockerfile.old),
-  [entrypoint.old.sh](./entrypoint.old.sh), [setup.sh](./setup.sh),
-  [build.sh](./build.sh), [customer-a.docker-compose.yml](./customer-a.docker-compose.yml),
-  [customer-b.docker-compose.yml](./customer-b.docker-compose.yml).
+- Fly.io deployment: see [fly.toml](./fly.toml) for a one-machine
+  always-on setup reachable only over your tailnet.
