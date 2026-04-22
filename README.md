@@ -25,6 +25,18 @@ docker exec -it "$HOST" zsh             # shell in — lands in ~/work
 
 First boot also needs a one-time tailnet ACL tweak so SSH works — see [Quick start → step 2](#2-configure-the-tailnet-policy).
 
+### Instant global access
+
+Once the container is up on your tailnet, from any tailnet device:
+
+```bash
+ssh root@<hostname>     # e.g. ssh root@my-devbox — drops straight into ~/work
+```
+
+Same hostname works in **Cursor** or **VS Code** — `Remote-SSH: Connect to Host…` → `root@<hostname>` opens the full IDE against the container (extensions, terminal, debugger, everything).
+
+No keys, no port forwards, no VPN dance. **Only works from devices on your tailnet** — the box never exposes a public port. Disable key expiry for the node at https://login.tailscale.com/admin/machines (⋯ → "Disable key expiry") so it doesn't fall off the tailnet every 180 days.
+
 ---
 
 **Contents:** [Required env](#required-environment-variables) · [Quick start](#quick-start) · [What's included](#whats-included) · [Obsidian](#obsidian-notes) · [.NET SDK](#optional--net-sdk) · [Persistence](#persistence) · [Cloud deployments](#cloud-deployments) · [Building](#building--publishing) · [Upgrading](#upgrading-from-an-older-image) · [Troubleshooting](#troubleshooting) · [Notes](#notes)
