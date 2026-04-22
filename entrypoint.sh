@@ -58,11 +58,14 @@ fi
 log "hostname: ${HOST}"
 
 # ---- 4. Bring up tailscale -------------------------------------------------
+# Tailscaled's stdout/stderr goes to the entrypoint's stdout/stderr so
+# 'docker logs' / 'fly logs' captures it. Previously redirected to a
+# file, which hid failures from the operator.
 /usr/sbin/tailscaled \
   --state="${TS_STATE_DIR}/tailscaled.state" \
   --socket=/var/run/tailscale/tailscaled.sock \
   --tun=userspace-networking \
-  >/var/log/tailscaled.log 2>&1 &
+  --verbose=1 &
 TAILSCALED_PID=$!
 
 # Wait for socket (max ~10s)
