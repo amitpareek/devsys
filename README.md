@@ -251,7 +251,7 @@ services:
   #   hostname: *host_b
   #   environment:
   #     HOSTNAME: *host_b
-  #     TS_AUTHKEY: ${TS_AUTHKEY_B:?set TS_AUTHKEY_B on the command line}
+  #     TS_AUTHKEY: ${TS_AUTHKEY}          # same key is fine (reusable)
   #   volumes:
   #     - box-b-home:/root
   #     - /Users/you/other-projects:/root/work
@@ -281,10 +281,10 @@ Export it once in your shell, then every `docker compose` command just
 works:
 
 ```bash
-# one-time per shell (or add to ~/.zshrc / ~/.bashrc)
+# one-time per shell (or add to ~/.zshrc / ~/.bashrc).
+# The same reusable key works for every container — generate one at
+# https://login.tailscale.com/admin/settings/keys and mark it Reusable.
 export TS_AUTHKEY=tskey-auth-xxxxxxxx
-# and for the second container, if you use it:
-# export TS_AUTHKEY_B=tskey-auth-yyyyyyyy
 
 # start / update
 docker compose up -d                               # create + start (or no-op if unchanged)
