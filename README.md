@@ -216,9 +216,57 @@ The whole model is "pull image, set two env vars, mount one volume". Works
 on any Docker-capable host — Fly.io machines, Railway, a plain VPS, OrbStack
 locally, etc. No build, no config files.
 
-Templates:
-- **Compose** (local / VPS): [compose.yml](./compose.yml) + [.env.example](./.env.example) — supports one or two containers in a single file
-- **Fly.io** (one always-on machine + volume, tailnet-only access): [fly.toml](./fly.toml)
+For **Fly.io**, see [fly.toml](./fly.toml) and the flysetup section
+below. For **local Docker / OrbStack**, drop the snippet below into a
+`compose.yml` next to your project.
+
+### Local Docker / OrbStack — compose.yml
+
+Create `compose.yml` (already gitignored in this repo so your auth key
+won't leak), edit the three lines marked `← CHANGE`, then
+`docker compose up -d`:
+
+```yaml
+services:
+
+  # ── First container ────────────────────────────────────────────────
+  dev1:
+    image: ghcr.io/amitpareek/devsys:latest
+    container_name: &host1 my-devbox                     # ← CHANGE: tailnet name
+    hostname: *host1
+    environment:
+      HOSTNAME: *host1
+      TS_AUTHKEY: tskey-auth-REPLACE-WITH-REUSABLE-KEY   # ← CHANGE
+    volumes:
+      - devsys-home-1:/root                              # ← CHANGE (optional): /abs/host/path to bind-mount instead
+    restart: unless-stopped
+
+  # ── Second container (uncomment to enable) ─────────────────────────
+  # dev2:
+  #   image: ghcr.io/amitpareek/devsys:latest
+  #   container_name: &host2 my-second-box
+  #   hostname: *host2
+  #   environment:
+  #     HOSTNAME: *host2
+  #     TS_AUTHKEY: tskey-auth-REPLACE-WITH-REUSABLE-KEY
+  #   volumes:
+  #     - devsys-home-2:/root
+  #   restart: unless-stopped
+
+volumes:
+  devsys-home-1:
+  # devsys-home-2:
+```
+
+The `&host1` / `*host1` anchor ties container_name, docker hostname,
+and the `HOSTNAME` env var together — edit the name once.
+
+Start, shell in, verify tailnet:
+```bash
+docker compose up -d
+docker exec -it my-devbox zsh           # lands in /root/work
+tailscale ssh root@my-devbox            # once tailnet is joined
+```
 
 **Fastest Fly path** — the interactive script handles app / volume /
 secret / deploy in one go:
