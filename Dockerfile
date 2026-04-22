@@ -112,21 +112,20 @@ RUN curl -fsSL https://mise.run | sh \
  && ~/.local/bin/mise use --global --yes node@lts \
  && ~/.local/bin/mise use --global --yes python@3.12 \
  && ~/.local/bin/mise reshim \
- && export PATH="$HOME/.local/share/mise/shims:$PATH" \
- && corepack enable \
- && corepack prepare pnpm@latest --activate \
- && mkdir -p "$PNPM_HOME/store" "$PNPM_HOME/global" \
- && pnpm config set store-dir       "$PNPM_HOME/store" \
- && pnpm config set global-dir      "$PNPM_HOME/global" \
- && pnpm config set global-bin-dir  "$PNPM_HOME" \
- && curl -fsSL https://bun.sh/install | bash \
+ && export PATH="$HOME/.local/share/mise/shims:$NPM_CONFIG_PREFIX/bin:$PATH" \
  && mkdir -p "$NPM_CONFIG_PREFIX" \
  && npm install -g \
+      pnpm \
       neonctl \
       @anthropic-ai/claude-code \
       @google/gemini-cli \
       @openai/codex \
-      opencode-ai
+      opencode-ai \
+ && mkdir -p "$PNPM_HOME/store" "$PNPM_HOME/global" \
+ && pnpm config set store-dir      "$PNPM_HOME/store" \
+ && pnpm config set global-dir     "$PNPM_HOME/global" \
+ && pnpm config set global-bin-dir "$PNPM_HOME" \
+ && curl -fsSL https://bun.sh/install | bash
 
 # ---- Shell config, work/vault dirs ----------------------------------------
 RUN mkdir -p /home/${USERNAME}/work /home/${USERNAME}/vault \
