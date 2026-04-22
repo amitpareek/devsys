@@ -181,8 +181,36 @@ else
 fi
 
 VOLS_JSON=$(fly volumes list -a "$APP_NAME" --json 2>/dev/null || echo '[]')
-if echo "$VOLS_JSON" | grep -q "\"name\": *\"$VOL_NAME\""; then
-  ok "volume '$VOL_NAME' already exists"
+EXISTING_VOL_ID=$(echo "$VOLS_JSON" \
+  | python3 -c "
+import sys, json
+for v in json.load(sys.stdin):
+    if v.get('name') == '$VOL_NAME':
+        print(v['id']); break
+" 2>/dev/null || echo "")
+
+if [ -n "$EXISTING_VOL_ID" ]; then
+  warn "volume '$VOL_NAME' already exists (id: $EXISTING_VOL_ID)"
+  echo "  Options:"
+  echo "    [k] Keep existing volume and its data  (default, safe)"
+  echo "    [d] DELETE the existing volume and create a fresh one (destructive)"
+  REPLY=$(ask "Choice [k/d]" "k")
+  case "$(echo "$REPLY" | tr '[:upper:]' '[:lower:]')" in
+    d|delete)
+      read -rp "$(printf "${RED}!${NC} Type '%s' to confirm destructive delete: " "$VOL_NAME")" CONFIRM
+      if [ "$CONFIRM" = "$VOL_NAME" ]; then
+        info "destroying volume $EXISTING_VOL_ID ..."
+        fly volumes destroy "$EXISTING_VOL_ID" -a "$APP_NAME" --yes
+        info "creating fresh volume '$VOL_NAME' (${VOL_SIZE}GB in $REGION)..."
+        fly volumes create "$VOL_NAME" --size "$VOL_SIZE" --region "$REGION" -a "$APP_NAME" --yes
+      else
+        warn "name mismatch — keeping existing volume"
+      fi
+      ;;
+    *)
+      ok "keeping existing volume"
+      ;;
+  esac
 else
   info "Creating volume '$VOL_NAME' (${VOL_SIZE}GB in $REGION)..."
   fly volumes create "$VOL_NAME" --size "$VOL_SIZE" --region "$REGION" -a "$APP_NAME" --yes
