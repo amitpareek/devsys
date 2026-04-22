@@ -150,36 +150,14 @@ you shell in.
 All npm-installed CLIs live at `~/.npm-global/bin/`, which is on PATH by
 default. mise shims are in `~/.local/share/mise/shims/`.
 
-## Obsidian (headless)
+## Obsidian notes
 
-`obsidian-headless` (binary: `ob`) is the official CLI client for Obsidian
-Sync. It works without a GUI/display server, unlike the desktop CLI that
-ships in the Obsidian installer.
+The `ob` binary (from `obsidian-headless`) is pre-installed. Use it if
+you want to sync notes with Obsidian Sync (paid add-on), or just `git
+clone` a notes repo into `~/work` and manage it however you like — the
+container doesn't care where your notes live.
 
-Typical sync flow:
-```bash
-ob login                          # paste Obsidian Sync credentials
-ob sync-list-remote               # show vaults on your account
-ob sync-setup --help              # see how to point a local path at a remote vault
-ob sync --help                    # run a sync (one-shot or continuous)
-ob sync-status                    # check sync state of a local vault
-```
-
-Publish flow (for Obsidian Publish):
-```bash
-ob publish-list-sites
-ob publish-setup --help
-ob publish
-```
-
-All subcommands: `login`, `logout`, `sync-list-remote`, `sync-list-local`,
-`sync-create-remote`, `sync-setup`, `sync-config`, `sync-status`,
-`sync-unlink`, `sync`, `publish-list-sites`, `publish-create-site`,
-`publish-setup`, `publish`, `publish-config`, `publish-site-options`,
-`publish-unlink`. Run `ob <cmd> --help` for options on any of them.
-
-Requires an Obsidian Sync subscription — sync is a paid add-on, not part
-of the free tier.
+Docs: https://github.com/obsidianmd/obsidian-headless  ·  `ob --help`
 
 ## Optional — .NET SDK
 
