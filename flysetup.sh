@@ -194,8 +194,24 @@ ok "secret staged (will apply on next deploy)"
 
 # ---- Deploy -----------------------------------------------------------------
 echo
-info "Deploying..."
-fly deploy -a "$APP_NAME"
+info "Deploying (single machine, immediate)..."
+fly deploy -a "$APP_NAME" --ha=false --now
+
+# Belt-and-suspenders: make sure any stopped machine is actually running.
+# Fresh deploys sometimes leave the machine in 'stopped' if the volume
+# attach shuffles things around.
+info "Ensuring machine is started..."
+fly machine list -a "$APP_NAME" --json 2>/dev/null \
+  | python3 -c "
+import sys, json
+for m in json.load(sys.stdin):
+    if m.get('state') != 'started':
+        print(m['id'])
+" 2>/dev/null \
+  | while read -r MID; do
+      [ -n "$MID" ] && fly machine start "$MID" -a "$APP_NAME" || true
+    done
+ok "machine is running"
 
 echo
 ok  "Done."
