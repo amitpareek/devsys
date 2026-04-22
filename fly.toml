@@ -21,8 +21,8 @@
 #   fly ssh console                   # break-glass root shell
 #   fly machine restart <id>          # reload entrypoint / image pull
 
-app            = "CHANGE-ME-devsys"
-primary_region = "ams"                     # see `fly platform regions`
+app            = "personal-devsys-flycksys"
+primary_region = "bom"
 
 [build]
   image = "ghcr.io/amitpareek/devsys:latest"
@@ -32,20 +32,22 @@ primary_region = "ams"                     # see `fly platform regions`
   # Pattern: the fly app is `<org>-devsys-<hostname>`; HOSTNAME is just
   # the `<hostname>` part, so you reach the box as `tailscale ssh
   # root@<hostname>`.
-  HOSTNAME = "CHANGE-ME-devsys"
+  HOSTNAME = "flycksys"
 
 # Single persistence volume. Shell history, tailscale state, AI auth,
 # redis data, ~/work files — everything lives here. Destroying it resets
 # the box.
 [[mounts]]
-  source       = "devsys_home"        # flysetup.sh rewrites this to devsys_<hostname>_vol
+  source       = "devsys_flycksys_vol"
   destination  = "/root"
-  initial_size = "10gb"
+  initial_size = "100gb"
 
 # One always-running machine. No auto-stop: a dev box should be reachable
-# whenever you ssh in. Bump memory if you hit OOMs with heavy builds.
+# whenever you ssh in. performance-1x = 1 dedicated CPU (much faster I/O
+# and build throughput than shared-cpu-*). Bump memory if you hit OOMs on
+# heavy builds.
 [[vm]]
-  size   = "shared-cpu-1x"
+  size   = "performance-1x"
   memory = "2gb"
 
 # No [[services]] block: the container isn't exposed on fly's public
