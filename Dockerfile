@@ -133,7 +133,9 @@ alias ll='eza -lah --group-directories-first --git'
 alias tree='eza --tree'
 alias cat='bat --paging=never'
 alias lg='lazygit'
-alias claude='claude --dangerously-skip-permissions'
+# (claude has an --dangerously-skip-permissions flag, but it's refused when
+# running as root — the container's sole user. Run 'claude' and press 'a'
+# to always-allow once per session.)
 
 cd ~/work 2>/dev/null || true
 ZSHRC

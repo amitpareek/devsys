@@ -161,7 +161,7 @@ you shell in.
 | GitHub CLI | `gh` | apt `cli.github.com` |
 | Fly.io | `flyctl`, `fly` | `fly.io/install.sh` → `/opt/fly` |
 | Neon | `neonctl` | npm global |
-| Claude Code | `claude` | npm `@anthropic-ai/claude-code`, aliased to `claude --dangerously-skip-permissions` |
+| Claude Code | `claude` | npm `@anthropic-ai/claude-code`. First run prompts for permissions — pick "always allow" once per session. |
 | Gemini CLI | `gemini` | npm `@google/gemini-cli` |
 | Codex CLI | `codex` | npm `@openai/codex` |
 | opencode | `opencode` | npm `opencode-ai` |
