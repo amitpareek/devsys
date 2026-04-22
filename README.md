@@ -161,9 +161,9 @@ you shell in.
 | GitHub CLI | `gh` | apt `cli.github.com` |
 | Fly.io | `flyctl`, `fly` | `fly.io/install.sh` → `/opt/fly` |
 | Neon | `neonctl` | npm global |
-| Claude Code | `claude` | npm `@anthropic-ai/claude-code`. First run prompts for permissions — pick "always allow" once per session. |
-| Gemini CLI | `gemini` | npm `@google/gemini-cli` |
-| Codex CLI | `codex` | npm `@openai/codex` |
+| Claude Code | `claude` | npm `@anthropic-ai/claude-code`. Pre-configured `~/.claude/settings.json` with exhaustive allow-list (no `--dangerously-skip-permissions` — that flag refuses as root). |
+| Gemini CLI | `gemini` | npm `@google/gemini-cli`. Aliased to `gemini --yolo` (auto-approve all) + `~/.gemini/settings.json` sets `auto_edit` fallback. |
+| Codex CLI | `codex` | npm `@openai/codex`. Aliased to `codex --dangerously-bypass-approvals-and-sandbox` + `~/.codex/config.toml` sets `approval_policy=never` + `sandbox_mode=danger-full-access`. |
 | opencode | `opencode` | npm `opencode-ai` |
 | obsidian-headless | `ob` | npm `obsidian-headless` — Obsidian's official headless Sync client |
 | PostgreSQL client | `psql`, `pg_dump`, `pg_restore`, `pg_isready` | apt `postgresql-client` |

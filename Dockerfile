@@ -133,9 +133,12 @@ alias ll='eza -lah --group-directories-first --git'
 alias tree='eza --tree'
 alias cat='bat --paging=never'
 alias lg='lazygit'
-# (claude has an --dangerously-skip-permissions flag, but it's refused when
-# running as root — the container's sole user. Run 'claude' and press 'a'
-# to always-allow once per session.)
+
+# AI CLI "yolo" aliases — flag-based auto-approve. Codex and Gemini accept
+# these flags as root; Claude does not, so 'claude' stays un-aliased and
+# relies on ~/.claude/settings.json instead.
+alias codex='codex --dangerously-bypass-approvals-and-sandbox'
+alias gemini='gemini --yolo'
 
 cd ~/work 2>/dev/null || true
 ZSHRC
@@ -148,10 +151,13 @@ RUN echo 'cd ~/work 2>/dev/null || true' > /root/.zlogin
 # Use zsh as root's login shell.
 RUN chsh -s /bin/zsh root
 
-# Claude Code refuses --dangerously-skip-permissions when running as root,
-# so we can't silence prompts via CLI flag. Instead, bake an exhaustive
-# user-level permissions allow-list into ~/.claude/settings.json.
-# Applies to every project (no project-level config needed).
+# ── AI CLI auto-approve configs ───────────────────────────────────────────
+# Each tool gets the fullest auto-approve we can set *persistently* without
+# a CLI flag. For codex/gemini the CLI flag path is preferred (aliased in
+# .zshrc below) since those flags don't refuse as root. Claude's flag
+# DOES refuse as root, so we lean entirely on settings.json for it.
+
+# Claude Code — user-level permissions allow-list. Applies to every project.
 RUN mkdir -p /root/.claude \
  && cat > /root/.claude/settings.json <<'JSON'
 {
@@ -176,6 +182,26 @@ RUN mkdir -p /root/.claude \
       "mcp__*"
     ],
     "deny": []
+  }
+}
+JSON
+
+# Codex CLI (OpenAI) — ~/.codex/config.toml: never prompt, full sandbox
+# access. docs: https://developers.openai.com/codex/config-reference
+RUN mkdir -p /root/.codex \
+ && cat > /root/.codex/config.toml <<'TOML'
+approval_policy = "never"
+sandbox_mode    = "danger-full-access"
+TOML
+
+# Gemini CLI (Google) — ~/.gemini/settings.json: auto-approve edits.
+# YOLO mode can only be enabled via --yolo flag (see alias below), not in
+# config, per google-gemini/gemini-cli docs.
+RUN mkdir -p /root/.gemini \
+ && cat > /root/.gemini/settings.json <<'JSON'
+{
+  "general": {
+    "defaultApprovalMode": "auto_edit"
   }
 }
 JSON
