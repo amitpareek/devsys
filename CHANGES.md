@@ -13,6 +13,9 @@ Dates are UTC. Format follows [Keep a Changelog](https://keepachangelog.com).
   under `/root`), so it's available immediately without volume seed
   and updates land on every image pull.
 
+- `/etc/tmux.conf` with `set -g mouse on`. System-wide so it refreshes
+  on image pulls; `~/.tmux.conf` still overrides per-volume.
+
 - `CLAUDE.md` at repo root — architecture + conventions guide for
   future Claude Code sessions. Covers the skel-seed lifecycle, root
   rationale and `IS_SANDBOX=1` workaround, entrypoint parallelism,

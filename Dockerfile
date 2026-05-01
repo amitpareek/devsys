@@ -210,6 +210,10 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 COPY z.sh /usr/local/bin/z
 RUN chmod +x /usr/local/bin/z
 
+# System-wide tmux defaults. /etc/tmux.conf is read before ~/.tmux.conf,
+# so users can still override per-volume.
+RUN echo 'set -g mouse on' > /etc/tmux.conf
+
 RUN printf '\n  devsys — all-inclusive dev container\n  work dir: ~/work\n\n' > /etc/motd
 
 # Default pwd for every new process in the container (docker exec, OrbStack
