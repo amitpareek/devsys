@@ -204,6 +204,12 @@ RUN mkdir -p /etc/skel \
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
+# z — tmux session/window manager (arrow-key picker). System-wide so it
+# survives the /root → /etc/skel/devsys move and is available immediately
+# without seeding.
+COPY z.sh /usr/local/bin/z
+RUN chmod +x /usr/local/bin/z
+
 RUN printf '\n  devsys — all-inclusive dev container\n  work dir: ~/work\n\n' > /etc/motd
 
 # Default pwd for every new process in the container (docker exec, OrbStack

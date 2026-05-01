@@ -7,6 +7,12 @@ Dates are UTC. Format follows [Keep a Changelog](https://keepachangelog.com).
 
 ### Added
 
+- `z` — tmux session/window manager with arrow-key picker, baked at
+  `/usr/local/bin/z`. Outside tmux it manages sessions; inside tmux it
+  manages windows of the current session. Installed system-wide (not
+  under `/root`), so it's available immediately without volume seed
+  and updates land on every image pull.
+
 - `CLAUDE.md` at repo root — architecture + conventions guide for
   future Claude Code sessions. Covers the skel-seed lifecycle, root
   rationale and `IS_SANDBOX=1` workaround, entrypoint parallelism,
