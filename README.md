@@ -131,6 +131,27 @@ for the whole tailnet:
 - Until these attrs are present the share command is a harmless no-op; the
   boot log shows `taildrive: could not share ...`.
 
+The `nodeAttrs` only *enable* Taildrive — they grant **read-only** access.
+To get **read-write**, add a `grants` block too (without it, mounted shares
+are read-only):
+
+```json
+"grants": [
+  {
+    "src": ["autogroup:member"],
+    "dst": ["tag:devsys"],
+    "app": {
+      "tailscale.com/cap/drive": [
+        { "shares": ["*"], "access": "rw" }
+      ]
+    }
+  }
+]
+```
+
+- `access` is `"rw"` (read-write) or `"ro"` (read-only); no grant = read-only.
+- Narrow `src` (e.g. `["autogroup:admin"]`) to limit who can write.
+
 Customize what's shared with the `TS_DRIVE_SHARES` env var
 (`"name:path,name:path"`; empty string disables sharing entirely),
 e.g. `-e TS_DRIVE_SHARES="work:/root/work,notes:/root/work/vault"`.

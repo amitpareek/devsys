@@ -14,8 +14,9 @@ Dates are UTC. Format follows [Keep a Changelog](https://keepachangelog.com).
   (`"name:path,name:path"`; empty disables). Best-effort: it's a no-op
   until the tailnet policy grants the `drive:share`/`drive:access`
   `nodeAttrs`, so it never aborts boot. README's "Configure the tailnet
-  policy" step documents the required `nodeAttrs` (one-time, tailnet-wide)
-  and the tagged-auth-key targeting caveat, plus how to mount a share.
+  policy" step documents the required `nodeAttrs` (one-time, tailnet-wide),
+  the `grants` block needed for read-write (without it shares mount
+  read-only), the tagged-auth-key targeting caveat, and how to mount a share.
   Image-affecting (`entrypoint.sh`) — existing deployments pick it up on
   the next image pull + recreate.
 
