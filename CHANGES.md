@@ -7,6 +7,18 @@ Dates are UTC. Format follows [Keep a Changelog](https://keepachangelog.com).
 
 ### Added
 
+- **Taildrive share on boot.** `entrypoint.sh` now runs `tailscale drive
+  share` after the tailnet comes up, exposing `~/work` over Tailscale's
+  built-in WebDAV server (`100.100.100.100:8080`) as a share named `work`.
+  Configurable via the `TS_DRIVE_SHARES` env var
+  (`"name:path,name:path"`; empty disables). Best-effort: it's a no-op
+  until the tailnet policy grants the `drive:share`/`drive:access`
+  `nodeAttrs`, so it never aborts boot. README's "Configure the tailnet
+  policy" step documents the required `nodeAttrs` (one-time, tailnet-wide)
+  and the tagged-auth-key targeting caveat, plus how to mount a share.
+  Image-affecting (`entrypoint.sh`) — existing deployments pick it up on
+  the next image pull + recreate.
+
 - `z` — tmux session/window manager with arrow-key picker, baked at
   `/usr/local/bin/z`. Outside tmux it manages sessions; inside tmux it
   manages windows of the current session. Installed system-wide (not

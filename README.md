@@ -105,6 +105,45 @@ have no user-owner, so `autogroup:self` never matches):
 Save the policy. A JSON error elsewhere in the file silently reverts the
 save — watch for the green "Saved" banner.
 
+#### Taildrive (optional — share files over the tailnet)
+
+The container automatically shares `~/work` over Tailscale's built-in
+WebDAV server (`100.100.100.100:8080`) as a [Taildrive](https://tailscale.com/kb/1369/taildrive)
+share named `work`. The sharing command runs on every boot from
+`entrypoint.sh`, so **no per-box setup is needed** — but Taildrive is
+gated by two `nodeAttrs` in the tailnet policy that you must add **once**
+for the whole tailnet:
+
+```json
+"nodeAttrs": [
+  {
+    "target": ["autogroup:member", "tag:devsys"],
+    "attr":   ["drive:share", "drive:access"]
+  }
+]
+```
+
+- `drive:share` lets the box expose `~/work`; `drive:access` lets other
+  tailnet devices mount it.
+- Include `tag:devsys` in `target` **only if your auth key is tagged** —
+  tagged nodes are not in `autogroup:member`, so without it the box can't
+  share. (`autogroup:member` alone is enough for an untagged box.)
+- Until these attrs are present the share command is a harmless no-op; the
+  boot log shows `taildrive: could not share ...`.
+
+Customize what's shared with the `TS_DRIVE_SHARES` env var
+(`"name:path,name:path"`; empty string disables sharing entirely),
+e.g. `-e TS_DRIVE_SHARES="work:/root/work,notes:/root/work/vault"`.
+
+Mount a share from any tailnet device (Linux example, via `davfs2`):
+
+```bash
+mount -t davfs http://100.100.100.100:8080/<tailnet>/<hostname>/work /mnt/work
+```
+
+On macOS/Windows use the Tailscale app's drive UI; `rclone` also works
+(add `--inplace` on client versions ≤ 1.64.2).
+
 ### 3. Run the container
 
 ```bash

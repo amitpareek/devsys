@@ -99,6 +99,29 @@ else
     --accept-routes=true || die "tailscale up failed"
 fi
 
+# ---- 5b. Taildrive shares --------------------------------------------------
+# Expose directories over the tailnet's built-in WebDAV server
+# (100.100.100.100:8080). Best-effort: this only works once the tailnet
+# policy file grants the node the "drive:share" nodeAttr — until then the
+# command is a harmless no-op, so we never let it abort boot. Default is to
+# share ~/work as "work"; override with TS_DRIVE_SHARES="name:path,name:path"
+# (empty string shares nothing).
+TS_DRIVE_SHARES="${TS_DRIVE_SHARES-work:/root/work}"
+if [ -n "$TS_DRIVE_SHARES" ]; then
+  IFS=',' read -ra _shares <<< "$TS_DRIVE_SHARES"
+  for _share in "${_shares[@]}"; do
+    _name="${_share%%:*}"
+    _path="${_share#*:}"
+    [ -n "$_name" ] && [ -n "$_path" ] || continue
+    mkdir -p "$_path"
+    if tailscale drive share "$_name" "$_path" 2>/dev/null; then
+      log "taildrive: sharing '${_name}' -> ${_path}"
+    else
+      log "taildrive: could not share '${_name}' (tailnet policy needs the drive:share nodeAttr — see README)"
+    fi
+  done
+fi
+
 log "ready — tailnet reachable as 'tailscale ssh root@${HOST}'. Seed PID: ${SEED_PID}"
 
 # ---- 6. Hand off: tailscaled is the long-running process ------------------
