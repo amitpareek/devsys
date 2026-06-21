@@ -16,7 +16,8 @@ Dates are UTC. Format follows [Keep a Changelog](https://keepachangelog.com).
   `nodeAttrs`, so it never aborts boot. README's "Configure the tailnet
   policy" step documents the required `nodeAttrs` (one-time, tailnet-wide),
   the `grants` block needed for read-write (without it shares mount
-  read-only), the tagged-auth-key targeting caveat, and how to mount a share.
+  read-only), the tagged-auth-key targeting caveat, how to mount a share,
+  and the known iOS Files write limitation (tailscale#14499).
   Image-affecting (`entrypoint.sh`) — existing deployments pick it up on
   the next image pull + recreate.
 

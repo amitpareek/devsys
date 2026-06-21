@@ -165,6 +165,14 @@ mount -t davfs http://100.100.100.100:8080/<tailnet>/<hostname>/work /mnt/work
 On macOS/Windows use the Tailscale app's drive UI; `rclone` also works
 (add `--inplace` on client versions ≤ 1.64.2).
 
+> **iOS caveat:** the Tailscale iOS app surfaces shares in the Files app
+> for reading, but write support is incomplete — some operations (e.g.
+> creating directories) fail with "the feature is not supported" even
+> with an `rw` grant ([tailscale#14499](https://github.com/tailscale/tailscale/issues/14499),
+> open). Writes from macOS/Linux clients work fully; for iOS writes, a
+> third-party WebDAV client pointed at `100.100.100.100:8080` is a
+> possible workaround.
+
 ### 3. Run the container
 
 ```bash
