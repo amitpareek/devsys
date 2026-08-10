@@ -25,7 +25,8 @@ WORKDIR /root
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates curl wget gnupg lsb-release \
       iptables iproute2 openssh-client \
-      bash zsh git vim less \
+      bash zsh git less \
+      vim nano micro \
       build-essential pkg-config \
       ripgrep fd-find bat fzf htop ncdu jq \
       unzip rsync iputils-ping net-tools dnsutils \
@@ -139,6 +140,12 @@ alias lg='lazygit'
 # relies on ~/.claude/settings.json instead.
 alias codex='codex --dangerously-bypass-approvals-and-sandbox'
 alias gemini='gemini --yolo'
+
+# micro is the friendly default (ctrl+s/ctrl+q, mouse, syntax highlighting);
+# vim and nano are both installed if you'd rather. Respects an inherited
+# EDITOR so `docker run -e EDITOR=vim` still wins.
+export EDITOR="${EDITOR:-micro}"
+export VISUAL="$EDITOR"
 
 cd ~/work 2>/dev/null || true
 ZSHRC

@@ -177,6 +177,25 @@ do
 done
 unset d
 export PATH
+
+# Prefer micro, fall back to nano then vim. Never overrides an EDITOR you
+# already set — comment this out or set EDITOR earlier to take control.
+if [ -z "${EDITOR:-}" ]; then
+  for e in micro nano vim; do
+    if command -v "$e" >/dev/null 2>&1; then
+      export EDITOR="$e"
+      break
+    fi
+  done
+  unset e
+fi
+if [ -n "${EDITOR:-}" ] && [ -z "${VISUAL:-}" ]; then
+  export VISUAL="$EDITOR"
+fi
+
+# Keep this last: sourcing must not exit non-zero, or callers running
+# under `set -e` would abort on the final conditional above.
+:
 ENVSH
   ok "wrote $ENV_FILE"
 
@@ -198,11 +217,12 @@ fetch_to() {
 # ----------------------------------------------------------------- groups ---
 
 # Order here is install order; deps are resolved on top of it.
-GROUP_ORDER=(base build cli shell runtimes cloud ai ai-yolo data notes tailscale)
+GROUP_ORDER=(base build editors cli shell runtimes cloud ai ai-yolo data notes tailscale)
 
 declare -A GROUP_DESC=(
   [base]="apt essentials — curl, wget, git, zsh, vim, unzip, rsync, ssh client, net tools, jq"
   [build]="compiler toolchain — build-essential, pkg-config, python3 + venv + pip"
+  [editors]="nano + micro (ctrl+s/ctrl+q, mouse, syntax highlighting); sets \$EDITOR"
   [cli]="modern CLI kit — ripgrep, fd, bat, fzf, eza, htop, ncdu, glow, lazygit"
   [shell]="zsh setup — starship prompt, direnv, tmux (mouse on), z session picker, devsys aliases"
   [runtimes]="mise + node@lts + python@3.12, pnpm, bun"
@@ -217,6 +237,7 @@ declare -A GROUP_DESC=(
 declare -A GROUP_DEPS=(
   [shell]="base"
   [cli]="base"
+  [editors]="base"
   [runtimes]="base"
   [cloud]="base runtimes"
   [ai]="base runtimes"
@@ -225,7 +246,7 @@ declare -A GROUP_DEPS=(
 )
 
 # Groups selected when you just hit Enter at the picker.
-DEFAULT_GROUPS=(base build cli shell runtimes)
+DEFAULT_GROUPS=(base build editors cli shell runtimes)
 
 # Groups never pulled in by `all` — must be named explicitly.
 OPT_IN_ONLY=(ai-yolo)
@@ -247,6 +268,13 @@ install_build() {
   step "build"
   apt_install build-essential pkg-config python3 python3-pip python3-venv
   ok "build toolchain"
+}
+
+install_editors() {
+  step "editors"
+  apt_install nano micro
+  ok "nano + micro"
+  # base already brings vim; EDITOR is set in env.sh so git/crontab pick it up.
 }
 
 install_cli() {
@@ -574,6 +602,7 @@ run_group() {
   case "$1" in
     base)      install_base ;;
     build)     install_build ;;
+    editors)   install_editors ;;
     cli)       install_cli ;;
     shell)     install_shell ;;
     runtimes)  install_runtimes ;;

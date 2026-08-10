@@ -7,6 +7,30 @@ Dates are UTC. Format follows [Keep a Changelog](https://keepachangelog.com).
 
 ### Added
 
+- **`nano` and `micro` editors, plus a default `$EDITOR`.** The image
+  previously baked only `vim`. `nano` happened to be present on some
+  existing volumes because it had been installed by hand — it was never
+  in the `Dockerfile`, so fresh deploys didn't get it. Now all three are
+  baked, and `.zshrc` sets `EDITOR="${EDITOR:-micro}"` + `VISUAL="$EDITOR"`
+  so `git commit`, `crontab -e` etc. open something friendly. An
+  inherited `EDITOR` (e.g. `docker run -e EDITOR=vim`) still wins.
+
+  micro was chosen as the default over nano because it behaves like a
+  normal editor (ctrl+s save, ctrl+q quit) while still having syntax
+  highlighting, mouse support and multi-cursor — and it's a single Go
+  binary in Ubuntu's repos, so no download step.
+
+  Image-affecting (`Dockerfile`) — CI rebuilds. **Existing deployments:**
+  the new binaries arrive with the next image pull + recreate, but the
+  `EDITOR` export will *not*, because `--ignore-existing` never
+  overwrites an existing `~/.zshrc`. To pick it up, either add the two
+  lines by hand or `rm ~/.zshrc` and restart to re-seed it.
+
+- **`editors` group in `install-tools.sh`** — installs `nano` + `micro`
+  and wires `EDITOR`/`VISUAL` into the generated `~/.devsys/env.sh`,
+  preferring micro → nano → vim by availability and never overriding an
+  `EDITOR` you already set. Included in the picker's default selection.
+
 - **`install-tools.sh`** — standalone installer that puts the devsys
   tool set on any plain Ubuntu/Debian box (VPS, CI runner, laptop),
   grouped so you pick what you want. Default invocation shows an
