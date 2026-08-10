@@ -7,6 +7,38 @@ Dates are UTC. Format follows [Keep a Changelog](https://keepachangelog.com).
 
 ### Added
 
+- **`install-tools.sh`** — standalone installer that puts the devsys
+  tool set on any plain Ubuntu/Debian box (VPS, CI runner, laptop),
+  grouped so you pick what you want. Default invocation shows an
+  arrow-key checkbox picker (↑↓ move, space toggle, `a`/`n`/`d`
+  select all/none/defaults, Enter installs) built on raw ANSI rather
+  than `tput`, so it works without `ncurses-bin`. Also drivable
+  non-interactively: `--list`, `--dry-run`, named groups, `all`.
+  Groups: `base`, `build`, `cli`, `shell`, `runtimes`, `cloud`, `ai`,
+  `ai-yolo`, `data`, `notes`, `tailscale`; inter-group deps are
+  resolved automatically (e.g. `ai` pulls `runtimes` pulls `base`).
+
+  Deliberately diverges from the image in four ways:
+  - Non-destructive. Everything is `$HOME`-relative; `~/.zshrc`,
+    `~/.bashrc` and `~/.tmux.conf` are only appended to, inside a
+    `# >>> devsys env >>>` marker block. Generated config is isolated
+    in `~/.devsys/{env.sh,rc.zsh,yolo.zsh}`, and pre-existing AI-CLI
+    configs are left alone instead of overwritten.
+  - The auto-approve configs are split into an opt-in `ai-yolo` group
+    that `all` skips and that requires typing `yolo` to confirm —
+    `bypassPermissions` / `danger-full-access` are fine in a
+    tailnet-only container and not fine on a machine you care about.
+  - `sudo` is used only for apt; starship, lazygit, mise, bun and the
+    npm globals install under `$HOME`, so it works as any sudo-capable
+    user, not just root.
+  - Idempotent — re-running tops up only what's missing.
+
+  Not image-affecting, so CI does not rebuild. Verified with
+  shellcheck (clean at `info` level), the interactive picker driven
+  over a pty, and a real end-to-end `shell`+`runtimes` install as a
+  non-root user (node 24.19.0, python 3.12.13, bun 1.3.14 all
+  resolving in a fresh zsh login shell).
+
 - **Taildrive share on boot.** `entrypoint.sh` now runs `tailscale drive
   share` after the tailnet comes up, exposing `~/work` over Tailscale's
   built-in WebDAV server (`100.100.100.100:8080`) as a share named `work`.

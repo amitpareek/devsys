@@ -258,6 +258,70 @@ you shell in.
 All npm-installed CLIs live at `~/.npm-global/bin/`, which is on PATH by
 default. mise shims are in `~/.local/share/mise/shims/`.
 
+## Installing the tool set on a plain machine
+
+Sometimes you want these tools on a box that isn't the container — a
+VPS, a CI runner, someone else's Ubuntu laptop.
+[`install-tools.sh`](./install-tools.sh) installs the same set on any
+Ubuntu/Debian host, grouped, with an arrow-key picker so you take only
+what you want.
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/amitpareek/devsys/main/install-tools.sh)
+```
+
+Process substitution rather than `curl | bash` — piping into bash
+consumes stdin, which would break the picker.
+
+```
+  devsys tool groups  select what to install
+
+  ❯ [x] base       apt essentials — curl, wget, git, zsh, vim, unzip, rsync…
+    [x] build      compiler toolchain — build-essential, pkg-config, python…
+    [x] cli        modern CLI kit — ripgrep, fd, bat, fzf, eza, htop, ncdu,…
+    [x] shell      zsh setup — starship prompt, direnv, tmux (mouse on), z …
+    [x] runtimes   mise + node@lts + python@3.12, pnpm, bun
+    [ ] cloud      gh (GitHub), flyctl (Fly.io), neonctl (Neon)
+    [ ] ai         AI coding CLIs — claude, gemini, codex, opencode
+    [ ] ai-yolo    auto-approve configs for the AI CLIs — DANGEROUS outside…
+    [ ] data       redis-server, postgresql-client (psql)
+    [ ] notes      obsidian-headless (ob)
+    [ ] tailscale  tailscale + tailscaled via the official installer
+
+  ↑↓ move  space toggle  a all  n none  d defaults  ⏎ install  q quit
+```
+
+Non-interactive forms, for scripting:
+
+```bash
+./install-tools.sh --list            # show groups and contents
+./install-tools.sh cli shell         # named groups; deps resolved for you
+./install-tools.sh all               # everything except ai-yolo
+./install-tools.sh --dry-run all     # print the commands, change nothing
+```
+
+Notable differences from the image, all deliberate:
+
+- **Nothing is clobbered.** Everything lands under `$HOME` (or `/usr`
+  via apt). Your `~/.zshrc`, `~/.bashrc`, and `~/.tmux.conf` are only
+  ever *appended* to, inside a `# >>> devsys env >>>` marker block.
+  Generated config lives in `~/.devsys/` (`env.sh` for PATH/env,
+  `rc.zsh` for the interactive zsh bits). Existing AI-CLI configs are
+  left alone rather than overwritten.
+- **`ai-yolo` is opt-in and off by default.** The image's
+  auto-approve configs (`bypassPermissions`, `danger-full-access`,
+  `--yolo`) are safe in a tailnet-only throwaway container and *not*
+  safe on a machine you care about, so `all` skips this group and
+  selecting it requires typing `yolo` to confirm.
+- **`sudo` only where apt needs it.** Run as any user with sudo, or as
+  root. Nothing else needs elevation — `starship`, `lazygit`, `mise`,
+  `bun` and the npm globals all install into `$HOME`.
+- **Re-runnable.** Every step checks first, so re-running only fills
+  in what's missing. Use it to top up a box after adding a group.
+
+Requires Ubuntu/Debian — it refuses to run anywhere else rather than
+half-installing.
+
 ## Obsidian notes
 
 The `ob` binary (from `obsidian-headless`) is pre-installed. Use it if
