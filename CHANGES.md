@@ -5,7 +5,106 @@ Dates are UTC. Format follows [Keep a Changelog](https://keepachangelog.com).
 
 ## [Unreleased]
 
+### Added
+
+- **The picker is now desired state, and re-running shows what's
+  installed.** It opens reflecting reality — each group is probed and
+  labelled `installed` / `partial` / `—`, and anything present starts
+  checked. Unchecking an installed group **uninstalls** it after typing
+  `remove` to confirm. Removals cascade to dependents (dropping `mise`
+  takes `node` with it) and run in reverse install order. `base` is
+  PROTECTED and can never be removed — it provides curl, ca-certificates
+  and gnupg, so removing it would break the running script and cascade
+  into everything else. A fresh box with nothing installed still starts
+  from the defaults. New `c` key resets the selection to current state.
+
+  Naming groups on the command line only ever installs — `install-tools.sh
+  node` never means "remove everything else". `--remove <group>...` is the
+  explicit, scriptable uninstall.
+
+- **`--cleanup`** — per-group table of disk footprint, a last-used
+  estimate and whether any user's shell history mentions the tools, then
+  flags groups with no history hits and 14+ days idle as removal
+  candidates and offers the picker. Size comes from dpkg's
+  `Installed-Size` plus `du` of the directories we own (`/opt/mise`,
+  `/opt/bun`, `/usr/share/dotnet`, npm `node_modules`). Last-used is
+  binary atime, which is an estimate not a fact — `relatime` means
+  day-granularity, and a `noatime` mount is detected and reported rather
+  than being silently shown as "never used". Data directories
+  (`/var/lib/docker`, `/var/lib/redis`, `/var/lib/tailscale`) are sized
+  and listed but never removed with their group.
+
+- **Automatic shell integration for bash as well as zsh.** Previously
+  bash got PATH only. Now `/etc/devsys/rc.bash` mirrors `rc.zsh` (mise,
+  direnv, starship, fzf keybindings, aliases) and is wired into
+  `/etc/bash.bashrc`; aliases moved to a shared
+  `/etc/devsys/aliases.sh`. `rc.zsh` now also runs `compinit` with
+  `/usr/local/share/zsh/site-functions` on `fpath`, without which no
+  completion did anything.
+
+- **System-wide shell completions**, generated for whatever is
+  installed, so nobody pastes `eval "$(tool completion zsh)"` anywhere:
+  gh, mise, flyctl, starship, docker, tailscale, rclone and bun, for
+  both shells. Best-effort — a tool with no completion subcommand is
+  skipped quietly.
+
+- **Tailscale joins with a fixed flag set**:
+  `--hostname=<vm name> --ssh=true --accept-dns=true --accept-routes=true`.
+  The hostname is derived from the machine's own hostname and sanitised
+  to a DNS label (lowercased, non-alphanumerics to hyphens, edges
+  trimmed); override with `TS_HOSTNAME`. An already-joined node gets
+  `tailscale set` with the same flags instead of a blocking re-`up`.
+
 ### Changed
+
+- **`ai-yolo` is now genuinely system-wide.** It previously did two
+  different things at once: the codex/gemini aliases landed in `/etc` and
+  so applied to *every* user, while the auto-approve configs were written
+  only to `$SUDO_USER`'s home. The result was that a new account
+  inherited `codex --dangerously-bypass-approvals-and-sandbox` and
+  `gemini --yolo` without anyone deciding it, while `claude` — which has
+  no alias and relies solely on its settings file — kept prompting. Now
+  it is uniformly system-wide: Claude Code via
+  `/etc/claude-code/managed-settings.json` (managed policy settings
+  outrank per-user ones), Gemini via `/etc/gemini-cli/settings.json`, and
+  Codex — which only ever reads `$HOME/.codex` — seeded into every home
+  plus `/etc/skel` for future accounts.
+
+  Every file it creates is recorded in
+  `/etc/devsys/ai-yolo.manifest`, and uninstalling deletes exactly those
+  — so a config a user wrote themselves (which install already skipped)
+  is never destroyed.
+
+- **`tailscale up` no longer hangs forever.** A bare `up` blocks
+  indefinitely when the tailnet requires manual device approval, with no
+  indication why. It now runs with `--timeout=120s` and then reports the
+  actual backend state, naming the fix for `NeedsMachineAuth` (approve
+  the node in the admin console — no re-authentication needed) and
+  `NeedsLogin`. The install continues either way.
+
+### Fixed
+
+- **Login check crashed for any npm-installed CLI.** Offering to run
+  `codex login` died with `/usr/bin/env: 'node': No such file or
+  directory`: commands ran via `sudo -u <user>`, which inherits sudo's
+  `secure_path`, so `/opt/mise/shims` was absent and `MISE_DATA_DIR`
+  unset — and every one of those CLIs starts with `#!/usr/bin/env node`.
+  Now run through `bash -lc`, which sources
+  `/etc/profile.d/devsys.sh` and therefore gets exactly the environment a
+  real login gets. This also let the `$HOME`-rewriting hack in the probes
+  go away, since `$HOME` now expands in the target user's own shell.
+
+- **Status detection depended on the caller's PATH.** Under `sudo`'s
+  `secure_path` a fully installed `node` group read as `partial`, which
+  in desired-state mode would have offered to remove it. The script now
+  adopts the environment it manages (`/etc/devsys/env.sh` plus the known
+  directories) before probing anything.
+
+- **`/etc/devsys/env.sh` aborted when `HOME` was unset.** It referenced
+  `$HOME` unguarded, so sourcing it under `set -u` — from cron, a systemd
+  unit, or this script itself — failed with `HOME: unbound variable`.
+  Now `${HOME:-}`; verified sourcing cleanly under `set -eu` with no
+  `HOME` and a stripped `PATH`.
 
 - **`install-tools.sh` now installs system-wide and targets Debian
   12/13.** Reworked from the earlier `$HOME`-relative design because

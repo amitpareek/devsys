@@ -297,15 +297,86 @@ reopen the process-substitution fd.
   ↑↓ move  space toggle  a all  n none  d defaults  ⏎ install  q quit
 ```
 
+Run it with `sudo` **from your own account, not as root**. `$SUDO_USER`
+decides whose logins get checked, who is offered the `docker` group, and
+who owns per-user config. As bare root, all of that targets root instead.
+
 Non-interactive forms:
 
 ```bash
-sudo ./install-tools.sh --list            # groups and contents
+sudo ./install-tools.sh --list            # groups, contents and status
 sudo ./install-tools.sh node dotnet       # named groups; deps resolved
 sudo ./install-tools.sh all               # everything except ai-yolo
 sudo ./install-tools.sh --dry-run all     # print commands, change nothing
 sudo ./install-tools.sh --check-logins    # just probe tool auth
+sudo ./install-tools.sh --cleanup         # size + last-use, flag unused
+sudo ./install-tools.sh --remove docker   # explicit uninstall
 ```
+
+### Re-running: the picker is desired state
+
+Run it again and the picker opens reflecting what's already on the box —
+every group probed and labelled `installed`, `partial` or `—`, with
+anything present pre-checked:
+
+```
+  ❯ [x] tailscale  installed   tailscale + tailscaled via the official inst…
+    [x] base       installed   apt essentials — curl, wget, git, zsh, vim, …
+    [x] node       partial     JS/TS — node@lts, npm, pnpm, bun
+    [ ] dotnet     —           .NET SDK (LTS channel) + runtime deps; dotne…
+
+  ↑↓ move  space toggle  a all  n none  d defaults  c current  ⏎ apply  q quit
+```
+
+Checked means "should be on this box". So:
+
+- **checked + missing/partial** → installs or repairs it
+- **checked + installed** → nothing to do
+- **unchecked + installed** → **uninstalls it**, after you type `remove`
+
+Removals cascade to dependents — dropping `mise` takes `node` with it —
+and run in reverse install order. Two guard rails: `base` can never be
+removed (it provides curl and ca-certificates, so removing it would break
+the running script), and user **data** is never touched, so
+`/var/lib/docker`, `/var/lib/redis` and `/var/lib/tailscale` survive and
+are yours to delete deliberately.
+
+Naming groups on the command line only ever installs —
+`install-tools.sh node` never means "remove everything else". Use
+`--remove <group>...` for a scriptable uninstall.
+
+### Finding what you no longer use
+
+```bash
+sudo ./install-tools.sh --cleanup
+```
+
+```
+    GROUP       STATUS          SIZE  LAST USED   IN SHELL HISTORY
+    -------------------------------------------------------------------
+    mise        installed     196 MB  today       yes (2)
+    node        installed     124 MB  today       yes (2)
+    dotnet      installed     712 MB  38d ago     no  unused?
+    -------------------------------------------------------------------
+    total                     1.0 GB
+```
+
+Groups with no shell-history hits and 14+ days idle get flagged, and it
+offers the picker so you can uncheck them.
+
+Read the last-used column as an estimate, not a fact: it comes from
+binary atime, `relatime` only advances that about once a day, and a
+`noatime` mount disables it entirely — which is detected and reported
+rather than shown as "never used".
+
+### Shell integration is automatic
+
+Both **zsh and bash** get mise, direnv, starship, fzf keybindings and the
+aliases, wired system-wide via `/etc/devsys/rc.zsh` and
+`/etc/devsys/rc.bash`. Completions for gh, mise, flyctl, starship,
+docker, tailscale and bun are generated into
+`/usr/local/share/zsh/site-functions` and `/etc/bash_completion.d` for
+whatever is installed — nothing to paste into your own rc file.
 
 ### System-wide, so every user gets the tools
 
@@ -327,7 +398,24 @@ Logins stay per-user. The auth check targets `$SUDO_USER`, not root.
 
 `tailscale` is deliberately the first group. It installs, enables
 `tailscaled` at boot (so the box rejoins the tailnet after a restart),
-offers to run `tailscale up`, and then **pauses**:
+and joins with a fixed flag set:
+
+```bash
+tailscale up --hostname=<vm name> --ssh=true --accept-dns=true --accept-routes=true
+```
+
+The hostname comes from the machine's own hostname, sanitised to a DNS
+label (lowercased, non-alphanumerics to hyphens); override with
+`TS_HOSTNAME`. A node that's already joined gets `tailscale set` with the
+same flags rather than a blocking re-`up`.
+
+It runs with `--timeout`, then reports the backend state — a bare
+`tailscale up` blocks forever when your tailnet requires manual device
+approval, without saying so. If you see `NeedsMachineAuth`, approve the
+node on the admin console's Machines page; `tailscaled` already holds the
+credentials and connects on its own, with no need to re-authenticate.
+
+Then it **pauses**:
 
 ```
 ── Tailscale is done — this box is now reachable.
@@ -378,10 +466,15 @@ per-machine and can't be copied, so run `sudo tailscale up` on each box.
   `/etc/tmux.conf` are only ever *appended* to, inside a
   `# >>> devsys env >>>` marker block. Existing AI-CLI configs are
   left alone rather than overwritten.
-- **`ai-yolo` is opt-in.** `bypassPermissions` /
-  `danger-full-access` / `--yolo` are fine in a tailnet-only throwaway
-  container and not on a machine you care about, so `all` skips it and
-  selecting it requires typing `yolo`.
+- **`ai-yolo` is opt-in and applies to every user.** `bypassPermissions`
+  / `danger-full-access` / `--yolo` are fine on a disposable
+  single-owner VM and not on a machine you care about, so `all` skips it
+  and selecting it requires typing `yolo`. It works system-wide via
+  Claude Code's `/etc/claude-code/managed-settings.json`, Gemini's
+  `/etc/gemini-cli/settings.json`, and — since Codex only reads
+  `$HOME/.codex` — a seed into every home plus `/etc/skel`. Every file it
+  creates is recorded in `/etc/devsys/ai-yolo.manifest`, so uninstalling
+  removes exactly those and never a config you wrote yourself.
 - **Docker group membership is a prompt, not a default** — it grants
   effective root, so you're asked before your user is added.
 - **Re-runnable.** Every step checks first, so re-running only fills in

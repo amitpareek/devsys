@@ -36,13 +36,25 @@ BIN_DIR="/usr/local/bin"
 CONF_DIR="/etc/devsys"
 ENV_FILE="$CONF_DIR/env.sh"
 RC_FILE="$CONF_DIR/rc.zsh"
-YOLO_FILE="$CONF_DIR/yolo.zsh"
+BASH_RC_FILE="$CONF_DIR/rc.bash"
+YOLO_FILE="$CONF_DIR/yolo.sh"
+# Records exactly which config files ai-yolo created, so uninstalling removes
+# only those and never a file someone wrote themselves.
+YOLO_MANIFEST="$CONF_DIR/ai-yolo.manifest"
+CLAUDE_MANAGED="/etc/claude-code/managed-settings.json"
+GEMINI_SYSTEM="/etc/gemini-cli/settings.json"
+ZSH_COMP_DIR="/usr/local/share/zsh/site-functions"
+BASH_COMP_DIR="/etc/bash_completion.d"
 MISE_DIR="/opt/mise"
 MISE_CONF="/etc/mise/config.toml"
 BUN_DIR="/opt/bun"
 FLY_DIR="/opt/fly"
 DOTNET_DIR="/usr/share/dotnet"
 NPM_PREFIX="/usr/local"
+
+# Flags every node joins with. --ssh gives tailnet SSH, --accept-dns uses the
+# tailnet's DNS, --accept-routes picks up subnet routes advertised by others.
+TS_FLAGS=(--ssh=true --accept-dns=true --accept-routes=true)
 
 DRY_RUN=0
 ASSUME_YES=0
@@ -151,12 +163,48 @@ resolve_target_user() {
 }
 
 # Run a command as the invoking human, not root.
+#
+# Via `bash -lc`, deliberately. A bare `sudo -u user cmd` inherits sudo's
+# secure_path, so /opt/mise/shims is absent and MISE_DATA_DIR is unset —
+# which makes any npm-installed CLI die with
+#   /usr/bin/env: 'node': No such file or directory
+# because its shebang is `#!/usr/bin/env node`. A login shell sources
+# /etc/profile.d/devsys.sh and therefore gets exactly the environment the
+# user would get by logging in.
 as_target() {
   if [ "$TARGET_USER" = "root" ] || [ "$TARGET_USER" = "$(id -un)" ]; then
     "$@"
-  else
-    sudo -u "$TARGET_USER" -H "$@"
+    return $?
   fi
+  local quoted
+  quoted="$(printf '%q ' "$@")"
+  sudo -u "$TARGET_USER" -H bash -lc "$quoted"
+}
+
+# Same, but takes a shell command string. Any $HOME inside it expands in the
+# TARGET user's login shell, which is what the probe strings rely on.
+as_target_sh() {
+  if [ "$TARGET_USER" = "root" ] || [ "$TARGET_USER" = "$(id -un)" ]; then
+    bash -lc "$1"
+    return $?
+  fi
+  sudo -u "$TARGET_USER" -H bash -lc "$1"
+}
+
+# Adopt the PATH this script itself manages, before doing anything that looks
+# at what's installed. Without this, status detection reflects the caller's
+# PATH: sudo's secure_path has no /opt/mise/shims or /opt/bun/bin, so a fully
+# installed `node` group would read as "partial" and unchecking it in the
+# picker would trigger a bogus removal.
+adopt_system_env() {
+  if [ -f "$ENV_FILE" ]; then
+    # shellcheck disable=SC1090
+    . "$ENV_FILE" || true
+  fi
+  path_prepend "$BIN_DIR"
+  path_prepend "$MISE_DIR/shims"
+  path_prepend "$BUN_DIR/bin"
+  path_prepend "$DOTNET_DIR"
 }
 
 apt_update_once() {
@@ -270,7 +318,7 @@ for _d in \\
   "$MISE_DIR/shims" \\
   "$BUN_DIR/bin" \\
   "$DOTNET_DIR" \\
-  "\$HOME/.dotnet/tools"
+  "\${HOME:-}/.dotnet/tools"
 do
   case ":\$PATH:" in
     *":\$_d:"*) ;;
@@ -343,7 +391,7 @@ declare -A GROUP_DESC=(
   [docker]="Docker CE engine + CLI, buildx and compose v2 plugins"
   [cloud]="gh (GitHub), flyctl (Fly.io), neonctl (Neon)"
   [ai]="AI coding CLIs — claude, gemini, codex, opencode"
-  [ai-yolo]="auto-approve configs for the AI CLIs — DANGEROUS outside a throwaway box"
+  [ai-yolo]="auto-approve for the AI CLIs, ALL users — DANGEROUS outside a throwaway VM"
   [data]="redis-server, postgresql-client (psql)"
   [notes]="obsidian-headless (ob)"
   [tailscale]="tailscale + tailscaled via the official installer"
@@ -375,6 +423,75 @@ DEFAULT_GROUPS=(tailscale base build editors cli shell mise node python auth)
 
 # Never pulled in by `all` — must be named explicitly.
 OPT_IN_ONLY=(ai-yolo)
+
+# Groups that must never be uninstalled. `base` provides curl, ca-certificates
+# and gnupg — removing it would break this very script mid-run, and every other
+# group depends on it, so unchecking it would cascade into wiping everything.
+PROTECTED=(base)
+
+is_protected() {
+  local g="$1" p
+  for p in "${PROTECTED[@]}"; do [ "$p" = "$g" ] && return 0; done
+  return 1
+}
+
+# ---- what is already installed? --------------------------------------------
+#
+# One probe list per group. An entry starting with / is a path test, anything
+# else is a command lookup. A group is "installed" when every probe passes,
+# "partial" when some do, "missing" when none do.
+declare -A GROUP_PROBE=(
+  [tailscale]="tailscale"
+  [base]="git jq zsh rsync /etc/devsys/env.sh"
+  [build]="gcc pkg-config"
+  [editors]="nano micro"
+  [cli]="rg fd bat fzf htop ncdu eza glow lazygit"
+  [shell]="starship direnv tmux /usr/local/bin/z /etc/devsys/rc.zsh /etc/devsys/rc.bash"
+  [mise]="mise /opt/mise"
+  [node]="node npm pnpm bun"
+  [python]="/opt/mise/installs/python"
+  [dotnet]="dotnet /usr/share/dotnet"
+  [docker]="docker"
+  [cloud]="gh flyctl neonctl"
+  [ai]="claude gemini codex opencode"
+  [ai-yolo]="/etc/devsys/yolo.sh"
+  [data]="redis-server psql"
+  [notes]="ob"
+  [auth]="devsys-auth age"
+)
+
+declare -A STATUS=()
+
+group_status() {
+  local g="$1" c present=0 total=0
+  for c in ${GROUP_PROBE[$g]:-}; do
+    total=$((total + 1))
+    case "$c" in
+      /*) [ -e "$c" ] && present=$((present + 1)) ;;
+      *)  have "$c" && present=$((present + 1)) ;;
+    esac
+  done
+  if   [ "$total"   = 0 ]; then printf 'missing\n'
+  elif [ "$present" = "$total" ]; then printf 'installed\n'
+  elif [ "$present" = 0 ]; then printf 'missing\n'
+  else printf 'partial\n'
+  fi
+}
+
+scan_status() {
+  local g
+  for g in "${GROUP_ORDER[@]}"; do STATUS[$g]="$(group_status "$g")"; done
+}
+
+# Is this a box we've never touched? Used to decide whether the picker should
+# start from the defaults or from what's actually on disk.
+box_is_fresh() {
+  local g
+  for g in "${GROUP_ORDER[@]}"; do
+    [ "${STATUS[$g]}" = missing ] || return 1
+  done
+  return 0
+}
 
 # ------------------------------------------------------------- installers --
 
@@ -464,7 +581,7 @@ install_lazygit() {
 
 install_shell() {
   step "shell"
-  apt_install direnv tmux
+  apt_install direnv tmux bash-completion
 
   if have starship; then
     skip "starship"
@@ -499,11 +616,24 @@ install_shell() {
 }
 
 write_shell_rc() {
-  run install -d -m 755 "$CONF_DIR"
+  run install -d -m 755 "$CONF_DIR" "$ZSH_COMP_DIR" "$BASH_COMP_DIR"
   if [ "$DRY_RUN" = 1 ]; then
-    info "would write $RC_FILE and wire /etc/zsh/zshrc"
+    info "would write $RC_FILE + $BASH_RC_FILE and wire zsh + bash"
     return 0
   fi
+
+  # Aliases are identical in both shells, so keep one copy.
+  cat >"$CONF_DIR/aliases.sh" <<'ALIASES'
+# Written by devsys install-tools.sh — shared by zsh and bash.
+command -v eza     >/dev/null 2>&1 && alias ls='eza --group-directories-first'
+command -v eza     >/dev/null 2>&1 && alias ll='eza -lah --group-directories-first --git'
+command -v eza     >/dev/null 2>&1 && alias tree='eza --tree'
+command -v bat     >/dev/null 2>&1 && alias cat='bat --paging=never'
+command -v lazygit >/dev/null 2>&1 && alias lg='lazygit'
+:
+ALIASES
+  chmod 644 "$CONF_DIR/aliases.sh"
+
   cat >"$RC_FILE" <<'RCZSH'
 # Written by devsys install-tools.sh — interactive zsh setup, system-wide.
 HISTSIZE=10000
@@ -511,24 +641,115 @@ SAVEHIST=10000
 [ -n "$HISTFILE" ] || HISTFILE="$HOME/.zsh_history"
 setopt SHARE_HISTORY HIST_IGNORE_DUPS HIST_IGNORE_SPACE
 
+# Completions installed by the installer live here; compinit must run or
+# none of them do anything. -i skips the insecure-directory prompt.
+fpath=(/usr/local/share/zsh/site-functions $fpath)
+autoload -Uz compinit && compinit -i -C 2>/dev/null || true
+
 eval "$(mise activate zsh 2>/dev/null || true)"
 eval "$(direnv hook zsh 2>/dev/null || true)"
 eval "$(starship init zsh 2>/dev/null || true)"
 
-command -v eza     >/dev/null && alias ls='eza --group-directories-first'
-command -v eza     >/dev/null && alias ll='eza -lah --group-directories-first --git'
-command -v eza     >/dev/null && alias tree='eza --tree'
-command -v bat     >/dev/null && alias cat='bat --paging=never'
-command -v lazygit >/dev/null && alias lg='lazygit'
+# fzf ctrl-r / ctrl-t keybindings (Debian ships them as examples).
+for _f in /usr/share/doc/fzf/examples/key-bindings.zsh \
+          /usr/share/doc/fzf/examples/completion.zsh; do
+  [ -r "$_f" ] && . "$_f"
+done
+unset _f
+
+[ -f /etc/devsys/aliases.sh ] && . /etc/devsys/aliases.sh
 
 # Written separately by the ai-yolo group, so regenerating this file
 # (i.e. re-running the 'shell' group) never drops those aliases.
-[ -f /etc/devsys/yolo.zsh ] && . /etc/devsys/yolo.zsh
+[ -f /etc/devsys/yolo.sh ] && . /etc/devsys/yolo.sh
 :
 RCZSH
   chmod 644 "$RC_FILE"
   ok "wrote $RC_FILE"
-  ensure_block /etc/zsh/zshrc "[ -f $RC_FILE ] && . $RC_FILE"
+
+  cat >"$BASH_RC_FILE" <<'RCBASH'
+# Written by devsys install-tools.sh — interactive bash setup, system-wide.
+HISTSIZE=10000
+HISTFILESIZE=10000
+HISTCONTROL=ignoreboth
+shopt -s histappend checkwinsize 2>/dev/null || true
+
+# bash-completion, then anything the installer dropped in.
+if ! shopt -oq posix; then
+  [ -r /usr/share/bash-completion/bash_completion ] && . /usr/share/bash-completion/bash_completion
+fi
+
+eval "$(mise activate bash 2>/dev/null || true)"
+eval "$(direnv hook bash 2>/dev/null || true)"
+eval "$(starship init bash 2>/dev/null || true)"
+
+for _f in /usr/share/doc/fzf/examples/key-bindings.bash \
+          /usr/share/doc/fzf/examples/completion.bash; do
+  [ -r "$_f" ] && . "$_f"
+done
+unset _f
+
+[ -f /etc/devsys/aliases.sh ] && . /etc/devsys/aliases.sh
+[ -f /etc/devsys/yolo.sh ]    && . /etc/devsys/yolo.sh
+:
+RCBASH
+  chmod 644 "$BASH_RC_FILE"
+  ok "wrote $BASH_RC_FILE"
+
+  ensure_block /etc/zsh/zshrc    "[ -f $RC_FILE ] && . $RC_FILE"
+  ensure_block /etc/bash.bashrc  "[ -f $BASH_RC_FILE ] && . $BASH_RC_FILE"
+}
+
+# ---- shell completions -----------------------------------------------------
+#
+# Generated system-wide for whatever is installed, so nobody has to paste
+# `eval "$(tool completion zsh)"` into their own rc file. Best-effort: a tool
+# that has no completion subcommand is skipped quietly.
+# Format: binary|command template with SHELL as the placeholder
+COMPLETION_GENS=(
+  'gh|gh completion -s SHELL'
+  'mise|mise completion SHELL'
+  'flyctl|flyctl completion SHELL'
+  'starship|starship completions SHELL'
+  'docker|docker completion SHELL'
+  'tailscale|tailscale completion SHELL'
+  'rclone|rclone completion SHELL'
+)
+
+install_completions() {
+  step "shell completions"
+  [ "$DRY_RUN" = 1 ] && { info "would generate zsh + bash completions for installed tools"; return 0; }
+
+  install -d -m 755 "$ZSH_COMP_DIR" "$BASH_COMP_DIR"
+
+  local entry bin tmpl sh out dest done_any=0
+  for entry in "${COMPLETION_GENS[@]}"; do
+    IFS='|' read -r bin tmpl <<<"$entry"
+    have "$bin" || continue
+    for sh in zsh bash; do
+      out="$(${tmpl//SHELL/$sh} 2>/dev/null || true)"
+      # A usable completion script is more than a line of noise.
+      [ "$(printf '%s' "$out" | wc -c)" -gt 100 ] || continue
+      if [ "$sh" = zsh ]; then dest="$ZSH_COMP_DIR/_$bin"; else dest="$BASH_COMP_DIR/$bin"; fi
+      printf '%s\n' "$out" >"$dest"
+      chmod 644 "$dest"
+      done_any=1
+    done
+    ok "$bin"
+  done
+
+  # bun ships its own installer that writes into the zsh site-functions dir.
+  if have bun; then
+    SHELL=zsh bun completions >/dev/null 2>&1 || true
+    ok "bun"
+    done_any=1
+  fi
+
+  if [ "$done_any" = 0 ]; then
+    info "nothing installed yet that provides completions"
+  else
+    info "zsh: $ZSH_COMP_DIR   bash: $BASH_COMP_DIR"
+  fi
 }
 
 install_mise() {
@@ -736,23 +957,15 @@ PKGS
   fi
 }
 
-install_ai_yolo() {
-  step "ai-yolo"
-  warn "This writes auto-approve configs that let the AI CLIs run any command"
-  warn "without asking. Only sane on a disposable, single-owner box."
-  if [ "$ASSUME_YES" != 1 ] && [ "$DRY_RUN" != 1 ]; then
-    printf '    type %syolo%s to confirm: ' "$B" "$R"
-    local ans; read -r ans
-    [ "$ans" = "yolo" ] || { warn "skipped ai-yolo"; return 0; }
-  fi
-  if [ "$DRY_RUN" = 1 ]; then
-    info "would write $TARGET_HOME/.claude/settings.json, .codex/config.toml, .gemini/settings.json"
-    info "would write codex/gemini yolo aliases to $YOLO_FILE"
-    return 0
-  fi
+# ---- ai-yolo: system-wide auto-approve -------------------------------------
+#
+# Applies to EVERY user on the box, by request. Two mechanisms are needed:
+# Claude Code and Gemini CLI read a system-level config, but Codex only ever
+# reads $HOME/.codex, so its config is seeded into each home plus /etc/skel
+# for accounts created later.
 
-  # These are per-user configs — write them for the human, not root.
-  write_user_json "$TARGET_HOME/.claude/settings.json" <<'JSON'
+claude_yolo_json() {
+  cat <<'JSON'
 {
   "permissions": {
     "defaultMode": "bypassPermissions",
@@ -763,49 +976,101 @@ install_ai_yolo() {
   }
 }
 JSON
+}
 
-  write_user_json "$TARGET_HOME/.codex/config.toml" <<'TOML'
+codex_yolo_toml() {
+  cat <<'TOML'
 approval_policy = "never"
 sandbox_mode    = "danger-full-access"
 TOML
+}
 
-  write_user_json "$TARGET_HOME/.gemini/settings.json" <<'JSON'
+gemini_yolo_json() {
+  cat <<'JSON'
 {
   "general": {
     "defaultApprovalMode": "auto_edit"
   }
 }
 JSON
+}
+
+# Every home ai-yolo should seed: root, real login accounts, and /etc/skel so
+# future accounts inherit it. Emits "user:home" pairs.
+yolo_homes() {
+  printf 'root:/root\n'
+  getent passwd \
+    | awk -F: '$3 >= 1000 && $3 < 60000 && $6 ~ /^\// { print $1 ":" $6 }'
+  printf 'root:/etc/skel\n'
+}
+
+# write_yolo <path> <owner> <content-fn> <dir-mode>
+# Never overwrites. Records what it created in the manifest.
+write_yolo() {
+  local path="$1" owner="$2" fn="$3" dmode="$4" grp
+  if [ -e "$path" ]; then
+    skip "$path exists — left alone"
+    return 0
+  fi
+  install -d -m "$dmode" "$(dirname "$path")"
+  "$fn" >"$path"
+  chmod 644 "$path"
+  if [ "$owner" != root ]; then
+    grp="$(id -gn "$owner" 2>/dev/null || echo "$owner")"
+    chown "$owner:$grp" "$path" "$(dirname "$path")" 2>/dev/null || true
+  fi
+  printf '%s\n' "$path" >>"$YOLO_MANIFEST"
+  ok "wrote $path"
+}
+
+install_ai_yolo() {
+  step "ai-yolo"
+  warn "This enables auto-approve for EVERY user on this box: the AI CLIs will"
+  warn "run any command without asking. Only sane on a disposable, single-owner VM."
+  if [ "$ASSUME_YES" != 1 ] && [ "$DRY_RUN" != 1 ]; then
+    printf '    type %syolo%s to confirm: ' "$B" "$R"
+    local ans; read -r ans
+    [ "$ans" = "yolo" ] || { warn "skipped ai-yolo"; return 0; }
+  fi
+  if [ "$DRY_RUN" = 1 ]; then
+    info "would write $CLAUDE_MANAGED and $GEMINI_SYSTEM (system-wide)"
+    info "would seed .codex/config.toml into every home + /etc/skel"
+    info "would write codex/gemini yolo aliases to $YOLO_FILE"
+    return 0
+  fi
 
   install -d -m 755 "$CONF_DIR"
-  cat >"$YOLO_FILE" <<'RCZSH'
-# Written by devsys install-tools.sh (ai-yolo group). Delete this file to
-# turn flag-based auto-approve back off.
+  touch "$YOLO_MANIFEST"; chmod 644 "$YOLO_MANIFEST"
+
+  # Claude Code: managed policy settings outrank every per-user setting.
+  write_yolo "$CLAUDE_MANAGED" root claude_yolo_json 755
+  # Gemini CLI: system-level settings.
+  write_yolo "$GEMINI_SYSTEM"  root gemini_yolo_json 755
+
+  # Codex has no system-wide config path, so seed per home.
+  local entry user home
+  while IFS= read -r entry; do
+    [ -n "$entry" ] || continue
+    user="${entry%%:*}"; home="${entry#*:}"
+    [ "$home" = /etc/skel ] || [ -d "$home" ] || continue
+    write_yolo "$home/.codex/config.toml" "$user" codex_yolo_toml 700
+  done <<EOF
+$(yolo_homes)
+EOF
+
+  # Aliases are read from /etc by both shells, so they cover all users.
+  cat >"$YOLO_FILE" <<'RCSH'
+# Written by devsys install-tools.sh (ai-yolo group). Sourced by both zsh and
+# bash, for every user. Delete this file to turn flag-based auto-approve off.
 alias codex='codex --dangerously-bypass-approvals-and-sandbox'
 alias gemini='gemini --yolo'
-RCZSH
+RCSH
   chmod 644 "$YOLO_FILE"
-  ok "wrote $YOLO_FILE"
+  ok "wrote $YOLO_FILE (all users)"
 
   if [ ! -f "$RC_FILE" ]; then
     warn "the 'shell' group isn't installed, so $YOLO_FILE won't be sourced."
   fi
-}
-
-# write_user_json <path> — writes stdin, never overwriting, owned by the human.
-write_user_json() {
-  local path="$1" owner_group
-  if [ -e "$path" ]; then
-    cat >/dev/null   # drain the heredoc
-    skip "$path exists — left alone"
-    return 0
-  fi
-  install -d -m 700 "$(dirname "$path")"
-  cat >"$path"
-  chmod 600 "$path"
-  owner_group="$(id -gn "$TARGET_USER" 2>/dev/null || echo "$TARGET_USER")"
-  chown -R "$TARGET_USER:$owner_group" "$(dirname "$path")" 2>/dev/null || true
-  ok "wrote $path (owner: $TARGET_USER)"
 }
 
 install_data() {
@@ -845,22 +1110,80 @@ install_tailscale() {
   fi
 
   [ "$DRY_RUN" = 1 ] && {
-    info "would enable tailscaled at boot and offer to run 'tailscale up'"
+    info "would enable tailscaled at boot, then:"
+    info "  tailscale up --hostname=$(ts_hostname) ${TS_FLAGS[*]}"
     return 0
   }
 
   enable_tailscaled
 
-  # Joining is interactive by design — you approve the node in the browser.
+  local hn; hn="$(ts_hostname)"
+  info "tailnet hostname: ${B}$hn${R}   flags: ${TS_FLAGS[*]}"
+
+  # Already on the tailnet: apply the settings idempotently instead of
+  # re-running `up`, which would block on a fresh auth round-trip.
   if tailscale status >/dev/null 2>&1; then
-    ok "already joined: $(tailscale status --peers=false 2>/dev/null | head -1)"
+    ok "already joined"
+    run tailscale set --hostname="$hn" "${TS_FLAGS[@]}" \
+      || warn "could not apply tailscale settings"
+    ok "settings applied"
     return 0
   fi
-  if confirm "Run 'tailscale up' now to join the tailnet?"; then
-    tailscale up || warn "'tailscale up' did not complete — run it again later"
-  else
-    info "join later with: ${B}sudo tailscale up${R}"
+
+  if ! confirm "Run 'tailscale up' now to join the tailnet?"; then
+    info "join later with: ${B}sudo tailscale up --hostname=$hn ${TS_FLAGS[*]}${R}"
+    return 0
   fi
+
+  # --timeout matters: a bare `tailscale up` blocks forever when the tailnet
+  # requires manual device approval, with no clue why. Time out, then report
+  # the actual backend state and what to do about it.
+  tailscale up --timeout=120s --hostname="$hn" "${TS_FLAGS[@]}" || true
+  ts_report_state "$hn"
+}
+
+# VM name = tailnet name. Tailscale wants a DNS label, so fold to lowercase
+# and replace anything else with a hyphen. Override with TS_HOSTNAME.
+ts_hostname() {
+  local h="${TS_HOSTNAME:-}"
+  if [ -z "$h" ]; then
+    h="$(hostname -s 2>/dev/null || true)"
+    [ -n "$h" ] || h="$(cat /etc/hostname 2>/dev/null || true)"
+  fi
+  h="${h,,}"
+  h="${h//[^a-z0-9-]/-}"
+  while case "$h" in -*) true ;; *) false ;; esac; do h="${h#-}"; done
+  while case "$h" in *-) true ;; *) false ;; esac; do h="${h%-}"; done
+  [ -n "$h" ] || h="devbox"
+  printf '%s' "$h"
+}
+
+ts_report_state() {
+  local hn="$1" state
+  state="$(tailscale status --json 2>/dev/null || true)"
+  case "$state" in
+    *'"BackendState": "Running"'*|*'"BackendState":"Running"'*)
+      ok "tailnet: joined and running as $hn"
+      return 0
+      ;;
+    *'NeedsMachineAuth'*)
+      warn "authenticated, but this node needs ADMIN APPROVAL before it connects."
+      info "your tailnet has device approval enabled — approve it on the"
+      info "Machines page of the admin console. No need to re-authenticate;"
+      info "tailscaled has the credentials and will connect once approved."
+      ;;
+    *'NeedsLogin'*)
+      warn "not logged in — the auth link may have expired, or it was for a"
+      warn "different tailnet. Retry with: ${B}sudo tailscale login${R}"
+      ;;
+    '')
+      warn "could not read tailscale status — is tailscaled running?"
+      ;;
+    *)
+      warn "tailscale is not Running yet. Check: ${B}tailscale status${R}"
+      ;;
+  esac
+  info "the install continues regardless — this doesn't block the rest."
 }
 
 # Survive a reboot. The official installer normally enables the unit, but
@@ -916,6 +1239,265 @@ handover_pause() {
   info "or just ${B}sudo $0${R} for the picker."
   printf '\n'
   exit 0
+}
+
+# ------------------------------------------------------------ uninstallers --
+#
+# Unchecking an installed group in the picker removes it. Two standing rules:
+#   1. never touch user DATA (docker images, redis dumps, tailscale node
+#      identity) — only the software. Data removal stays a manual act.
+#   2. never remove what the system or this script depends on. `base` is
+#      PROTECTED for that reason, and python3 stays even when `build` goes,
+#      because much of Debian links against it.
+
+apt_purge() {
+  run env DEBIAN_FRONTEND=noninteractive apt-get purge -y "$@"
+}
+
+npm_uninstall() {
+  have npm || { info "npm already gone — skipping npm packages"; return 0; }
+  run npm uninstall -g --prefix "$NPM_PREFIX" "$@" || true
+}
+
+# Strip the devsys marker block back out of a system rc file.
+unwire_block() {
+  local target="$1"
+  [ -f "$target" ] || return 0
+  if [ "$DRY_RUN" = 1 ]; then info "would unwire $target"; return 0; fi
+  grep -qF "$MARKER" "$target" || return 0
+  sed -i "\|^${MARKER}\$|,\|^${MARKER_END}\$|d" "$target"
+  ok "unwired $target"
+}
+
+remove_tailscale() {
+  step "remove tailscale"
+  apt_purge tailscale || true
+  warn "node identity left in /var/lib/tailscale — delete it to fully de-register"
+  ok "tailscale removed"
+}
+
+remove_build() {
+  step "remove build"
+  apt_purge build-essential pkg-config || true
+  info "python3 kept — removing it would break large parts of Debian"
+  ok "build removed"
+}
+
+remove_editors() {
+  step "remove editors"
+  apt_purge nano micro || true
+  info "vim kept (it belongs to base)"
+  ok "editors removed"
+}
+
+remove_cli() {
+  step "remove cli"
+  apt_purge ripgrep fd-find bat fzf htop ncdu eza glow || true
+  run rm -f "$BIN_DIR/fd" "$BIN_DIR/bat" "$BIN_DIR/lazygit"
+  ok "cli removed"
+}
+
+remove_shell() {
+  step "remove shell"
+  apt_purge direnv tmux || true
+  run rm -f "$BIN_DIR/starship" "$BIN_DIR/z" "$RC_FILE" "$BASH_RC_FILE" \
+            "$CONF_DIR/aliases.sh"
+  unwire_block /etc/zsh/zshrc
+  unwire_block /etc/bash.bashrc
+  ok "shell removed (PATH/env stays — that belongs to base)"
+}
+
+remove_mise() {
+  step "remove mise"
+  run rm -f "$BIN_DIR/mise"
+  run rm -rf "$MISE_DIR" /etc/mise
+  ok "mise removed (and the runtimes it managed)"
+}
+
+remove_node() {
+  step "remove node"
+  npm_uninstall pnpm
+  run rm -rf "$BUN_DIR"
+  run rm -f "$BIN_DIR/bun" "$BIN_DIR/bunx"
+  if have mise && [ "$DRY_RUN" = 0 ]; then
+    MISE_DATA_DIR="$MISE_DIR" MISE_GLOBAL_CONFIG_FILE="$MISE_CONF" \
+      mise uninstall --all node 2>/dev/null || true
+  fi
+  ok "node + pnpm + bun removed"
+}
+
+remove_python() {
+  step "remove python"
+  if have mise && [ "$DRY_RUN" = 0 ]; then
+    MISE_DATA_DIR="$MISE_DIR" MISE_GLOBAL_CONFIG_FILE="$MISE_CONF" \
+      mise uninstall --all python 2>/dev/null || true
+  fi
+  ok "mise-managed python removed (system python3 untouched)"
+}
+
+remove_dotnet() {
+  step "remove dotnet"
+  run rm -rf "$DOTNET_DIR"
+  run rm -f "$BIN_DIR/dotnet"
+  info "per-user global tools in ~/.dotnet/tools left alone"
+  ok "dotnet removed"
+}
+
+remove_docker() {
+  step "remove docker"
+  apt_purge docker-ce docker-ce-cli containerd.io \
+            docker-buildx-plugin docker-compose-plugin || true
+  warn "images, volumes and containers left in /var/lib/docker — delete manually if you mean it"
+  ok "docker removed"
+}
+
+remove_cloud() {
+  step "remove cloud"
+  apt_purge gh || true
+  npm_uninstall neonctl
+  run rm -rf "$FLY_DIR"
+  run rm -f "$BIN_DIR/fly" "$BIN_DIR/flyctl"
+  ok "cloud removed"
+}
+
+remove_ai() {
+  step "remove ai"
+  npm_uninstall @anthropic-ai/claude-code @google/gemini-cli @openai/codex opencode-ai
+  ok "AI CLIs removed (per-user logins under \$HOME left alone)"
+}
+
+remove_ai_yolo() {
+  step "remove ai-yolo"
+  run rm -f "$YOLO_FILE"
+
+  # Manifest-driven so we delete only files ai-yolo actually created, never a
+  # settings.json somebody wrote themselves (those were skipped on install).
+  if [ -f "$YOLO_MANIFEST" ] && [ "$DRY_RUN" = 0 ]; then
+    local f n=0
+    while IFS= read -r f; do
+      [ -n "$f" ] || continue
+      if [ -e "$f" ]; then rm -f "$f"; n=$((n + 1)); fi
+    done <"$YOLO_MANIFEST"
+    rm -f "$YOLO_MANIFEST"
+    ok "removed $n config file(s) recorded in the manifest"
+  elif [ "$DRY_RUN" = 1 ]; then
+    info "would remove every config file listed in $YOLO_MANIFEST"
+  else
+    warn "no manifest found — any pre-existing configs were left untouched"
+  fi
+  ok "ai-yolo removed (all users)"
+}
+
+remove_data() {
+  step "remove data"
+  apt_purge redis-server postgresql-client || true
+  warn "redis data left in /var/lib/redis — delete manually if you mean it"
+  ok "data removed"
+}
+
+remove_notes() {
+  step "remove notes"
+  npm_uninstall obsidian-headless
+  ok "notes removed"
+}
+
+remove_auth() {
+  step "remove auth"
+  run rm -f "$BIN_DIR/devsys-auth"
+  apt_purge age || true
+  info "any exported .age bundles are left where you put them"
+  ok "auth removed"
+}
+
+remove_group() {
+  case "$1" in
+    tailscale) remove_tailscale ;;
+    build)     remove_build ;;
+    editors)   remove_editors ;;
+    cli)       remove_cli ;;
+    shell)     remove_shell ;;
+    mise)      remove_mise ;;
+    node)      remove_node ;;
+    python)    remove_python ;;
+    dotnet)    remove_dotnet ;;
+    docker)    remove_docker ;;
+    cloud)     remove_cloud ;;
+    ai)        remove_ai ;;
+    ai-yolo)   remove_ai_yolo ;;
+    data)      remove_data ;;
+    notes)     remove_notes ;;
+    auth)      remove_auth ;;
+    base)      warn "base is protected and will not be removed" ;;
+    *)         die "no uninstaller for group: $1" ;;
+  esac
+}
+
+# Removing a group must also remove whatever installed group depends on it,
+# or you'd be left with e.g. node shims and no mise behind them. Returns the
+# closed set in REVERSE install order, so dependents go first.
+expand_removals() {
+  local -A rm=()
+  local g dep other changed=1 i
+  for g in "$@"; do
+    is_protected "$g" && continue
+    rm[$g]=1
+  done
+  while [ "$changed" = 1 ]; do
+    changed=0
+    for other in "${GROUP_ORDER[@]}"; do
+      [ -n "${rm[$other]:-}" ] && continue
+      is_protected "$other" && continue
+      [ "${STATUS[$other]:-missing}" = missing ] && continue
+      for dep in ${GROUP_DEPS[$other]:-}; do
+        if [ -n "${rm[$dep]:-}" ]; then rm[$other]=1; changed=1; break; fi
+      done
+    done
+  done
+  for (( i=${#GROUP_ORDER[@]} - 1; i >= 0; i-- )); do
+    g="${GROUP_ORDER[$i]}"
+    [ -n "${rm[$g]:-}" ] && printf '%s\n' "$g"
+  done
+}
+
+# confirm_and_remove <array-name> — shows the removal plan, flags dependents
+# that were pulled in, and empties the array unless explicitly confirmed.
+# Takes the array by NAME so it can clear the caller's copy on a decline.
+confirm_and_remove() {
+  # nameref so a declined confirmation can clear the caller's array
+  local -n __list="$1"
+  [ ${#__list[@]} -gt 0 ] || return 0
+
+  printf '\n%s%sTO REMOVE:%s %s\n' "$B" "$RED" "$R" "${__list[*]}"
+
+  local extra=() u found g
+  for g in "${__list[@]}"; do
+    found=0
+    for u in "${unchecked[@]:-}"; do [ "$u" = "$g" ] && found=1; done
+    [ "$found" = 0 ] && extra+=("$g")
+  done
+  [ ${#extra[@]} -gt 0 ] && warn "also removing dependents: ${extra[*]}"
+
+  info "software only — docker images, redis data and the tailscale node"
+  info "identity stay on disk for you to delete deliberately."
+
+  if [ "$DRY_RUN" = 1 ]; then
+    info "(dry run — nothing will be removed)"
+    return 0
+  fi
+  if [ "$ASSUME_YES" = 1 ]; then
+    return 0
+  fi
+  if [ ! -t 0 ]; then
+    warn "not a terminal and no --yes — skipping removals"
+    __list=()
+    return 0
+  fi
+  printf '\n    type %sremove%s to confirm, anything else to skip: ' "$B$RED" "$R"
+  local ans; read -r ans
+  if [ "$ans" != "remove" ]; then
+    warn "skipping all removals"
+    __list=()
+  fi
 }
 
 run_group() {
@@ -984,9 +1566,8 @@ check_logins() {
     have "$bin" || continue
     any=1
 
-    # Probe as the human, with their HOME, quietly.
-    if as_target env HOME="$TARGET_HOME" sh -c "${probe//\$HOME/$TARGET_HOME}" \
-         >/dev/null 2>&1; then
+    # Probe as the human, in their login shell so $HOME and PATH are theirs.
+    if as_target_sh "$probe" >/dev/null 2>&1; then
       status="${GRN}logged in${R}"
     else
       status="${YLW}NOT logged in${R}"
@@ -1027,16 +1608,209 @@ check_logins() {
     if confirm "Run it now as $TARGET_USER?"; then
       # Interactive on purpose: these flows need a browser code or paste.
       if [ "$pname" = "Tailscale" ]; then
+        # Needs root, and must not go through the unprivileged user.
+        # shellcheck disable=SC2086
         $plogin || warn "$pname login did not complete"
       else
-        # Intentionally unquoted: $plogin is a multi-word command line.
-        # shellcheck disable=SC2086
-        as_target env HOME="$TARGET_HOME" $plogin || warn "$pname login did not complete"
+        as_target_sh "$plogin" || warn "$pname login did not complete"
       fi
     else
       info "skipped — run it later as $TARGET_USER"
     fi
   done
+}
+
+# ---------------------------------------------------------------- cleanup ---
+#
+# Shows what's installed, how much space it costs and whether anyone seems to
+# be using it, so dead weight can be unchecked in the picker and removed.
+#
+# "Last used" comes from binary atime. That is a genuine estimate, not a fact:
+# most filesystems mount `relatime` (atime only advances once a day), and a
+# `noatime` mount disables it entirely — which is detected and reported rather
+# than quietly presented as "never used".
+
+# Big directories a group owns outside of dpkg's accounting.
+declare -A GROUP_DIRS=(
+  [mise]="/opt/mise"
+  [node]="/opt/bun /usr/local/lib/node_modules/pnpm"
+  [dotnet]="/usr/share/dotnet"
+  [cloud]="/opt/fly /usr/local/lib/node_modules/neonctl"
+  [ai]="/usr/local/lib/node_modules/@anthropic-ai /usr/local/lib/node_modules/@google /usr/local/lib/node_modules/@openai /usr/local/lib/node_modules/opencode-ai"
+  [notes]="/usr/local/lib/node_modules/obsidian-headless"
+  [auth]="/usr/local/bin/devsys-auth"
+)
+
+# Data directories that are NOT removed with their group.
+declare -A GROUP_DATA=(
+  [docker]="/var/lib/docker"
+  [data]="/var/lib/redis /var/lib/postgresql"
+  [tailscale]="/var/lib/tailscale"
+)
+
+human_kb() {
+  local kb="${1:-0}"
+  if   [ "$kb" -ge 1048576 ]; then printf '%d.%d GB' $((kb / 1048576)) $(( (kb % 1048576) * 10 / 1048576 ))
+  elif [ "$kb" -ge 1024 ];    then printf '%d MB' $((kb / 1024))
+  else printf '%d KB' "$kb"
+  fi
+}
+
+# Package owning a path, without a pipe (see the apt_has note on pipefail).
+pkg_owning() {
+  local out first
+  out="$(dpkg -S "$1" 2>/dev/null || true)"
+  first="${out%%$'\n'*}"
+  case "$first" in
+    *:*) printf '%s' "${first%%:*}" ;;
+    *)   printf '' ;;
+  esac
+}
+
+group_size_kb() {
+  local g="$1" total=0 c p pkg sz dir
+  local -A pkgs=()
+  for c in ${GROUP_PROBE[$g]:-}; do
+    case "$c" in /*) continue ;; esac
+    have "$c" || continue
+    p="$(command -v "$c" 2>/dev/null || true)"
+    [ -n "$p" ] || continue
+    p="$(readlink -f "$p" 2>/dev/null || printf '%s' "$p")"
+    pkg="$(pkg_owning "$p")"
+    [ -n "$pkg" ] && pkgs[$pkg]=1
+  done
+  for pkg in "${!pkgs[@]}"; do
+    sz="$(dpkg-query -W -f='${Installed-Size}' "$pkg" 2>/dev/null || echo 0)"
+    case "$sz" in ''|*[!0-9]*) sz=0 ;; esac
+    total=$((total + sz))
+  done
+  for dir in ${GROUP_DIRS[$g]:-}; do
+    [ -d "$dir" ] || continue
+    sz="$(du -sk "$dir" 2>/dev/null || true)"
+    sz="${sz%%[!0-9]*}"
+    case "$sz" in ''|*[!0-9]*) sz=0 ;; esac
+    total=$((total + sz))
+  done
+  printf '%s' "$total"
+}
+
+NOATIME=0
+detect_noatime() {
+  local opts
+  opts="$(findmnt -no OPTIONS --target /usr 2>/dev/null || true)"
+  case "$opts" in *noatime*) NOATIME=1 ;; esac
+}
+
+# Days since the most recently accessed binary in the group; empty if unknown.
+group_days_idle() {
+  local g="$1" c p at newest=0 now
+  now="$(date +%s)"
+  for c in ${GROUP_PROBE[$g]:-}; do
+    case "$c" in /*) continue ;; esac
+    have "$c" || continue
+    p="$(command -v "$c" 2>/dev/null || true)"
+    [ -n "$p" ] || continue
+    at="$(stat -c %X "$p" 2>/dev/null || true)"
+    case "$at" in ''|*[!0-9]*) continue ;; esac
+    [ "$at" -gt "$newest" ] && newest="$at"
+  done
+  [ "$newest" = 0 ] && { printf ''; return 0; }
+  printf '%s' $(( (now - newest) / 86400 ))
+}
+
+# How many users' shell histories mention any of the group's binaries.
+group_history_hits() {
+  local g="$1" c hf hits=0
+  for hf in /root/.zsh_history /root/.bash_history \
+            /home/*/.zsh_history /home/*/.bash_history; do
+    [ -r "$hf" ] || continue
+    for c in ${GROUP_PROBE[$g]:-}; do
+      case "$c" in /*) continue ;; esac
+      if grep -qw -- "$c" "$hf" 2>/dev/null; then
+        hits=$((hits + 1))
+        break
+      fi
+    done
+  done
+  printf '%s' "$hits"
+}
+
+cleanup_report() {
+  step "cleanup — what's installed, what it costs, what looks unused"
+  detect_noatime
+
+  printf '\n    %-11s %-10s %9s  %-11s %s\n' \
+    "GROUP" "STATUS" "SIZE" "LAST USED" "IN SHELL HISTORY"
+  printf '    %s\n' "-------------------------------------------------------------------"
+
+  local g total=0 kb idle hits idle_txt hist_txt any=0 candidates=()
+  for g in "${GROUP_ORDER[@]}"; do
+    case "${STATUS[$g]}" in installed|partial) ;; *) continue ;; esac
+    any=1
+    kb="$(group_size_kb "$g")"
+    total=$((total + kb))
+    idle="$(group_days_idle "$g")"
+    hits="$(group_history_hits "$g")"
+
+    if [ -z "$idle" ]; then idle_txt="unknown"
+    elif [ "$NOATIME" = 1 ]; then idle_txt="n/a"
+    elif [ "$idle" = 0 ]; then idle_txt="today"
+    else idle_txt="${idle}d ago"
+    fi
+
+    if [ "$hits" -gt 0 ]; then hist_txt="${GRN}yes ($hits)${R}"; else hist_txt="${DIM}no${R}"; fi
+
+    # Flag as a candidate only when both signals agree it's cold.
+    if [ "$hits" = 0 ] && [ -n "$idle" ] && [ "$NOATIME" = 0 ] && [ "$idle" -ge 14 ]; then
+      candidates+=("$g")
+      printf '    %s%-11s%s %-10s %9s  %-11s %b  %sunused?%s\n' \
+        "$YLW" "$g" "$R" "${STATUS[$g]}" "$(human_kb "$kb")" "$idle_txt" "$hist_txt" "$YLW" "$R"
+    else
+      printf '    %-11s %-10s %9s  %-11s %b\n' \
+        "$g" "${STATUS[$g]}" "$(human_kb "$kb")" "$idle_txt" "$hist_txt"
+    fi
+  done
+
+  if [ "$any" = 0 ]; then
+    printf '\n'; info "nothing installed yet"; return 0
+  fi
+
+  printf '    %s\n' "-------------------------------------------------------------------"
+  printf '    %-11s %-10s %9s\n\n' "total" "" "$(human_kb "$total")"
+
+  # Data directories are reported but never removed with their group.
+  local d dkb shown=0
+  for g in "${!GROUP_DATA[@]}"; do
+    for d in ${GROUP_DATA[$g]}; do
+      [ -d "$d" ] || continue
+      dkb="$(du -sk "$d" 2>/dev/null || true)"; dkb="${dkb%%[!0-9]*}"
+      case "$dkb" in ''|*[!0-9]*) continue ;; esac
+      [ "$shown" = 0 ] && info "${B}data directories (never removed automatically):${R}"
+      shown=1
+      printf '      %-24s %9s  %s(%s)%s\n' "$d" "$(human_kb "$dkb")" "$DIM" "$g" "$R"
+    done
+  done
+  [ "$shown" = 1 ] && printf '\n'
+
+  if [ "$NOATIME" = 1 ]; then
+    warn "/usr is mounted noatime, so last-use times are unavailable."
+    warn "Shell-history hits are the only usage signal here."
+  else
+    info "${DIM}last-use is estimated from binary atime; relatime means it's"
+    info "accurate to about a day, and never proof a tool is unused.${R}"
+  fi
+
+  if [ ${#candidates[@]} -gt 0 ]; then
+    printf '\n'
+    info "${YLW}candidates to remove:${R} ${candidates[*]}"
+    info "no shell-history hits and untouched for 14+ days"
+  else
+    printf '\n'
+    info "nothing looks clearly unused"
+  fi
+  printf '\n'
+  info "to remove any of it: run the picker and uncheck the group."
+  printf '\n'
 }
 
 # ------------------------------------------------------------ selection ----
@@ -1085,7 +1859,8 @@ print_groups() {
     mark=""
     is_default "$g"     && mark="${GRN}[default]${R}"
     is_opt_in_only "$g" && mark="${YLW}[opt-in]${R}"
-    printf '  %s%2d%s  %s%-10s%s %s\n' "$B" "$i" "$R" "$CYN" "$g" "$R" "$mark"
+    printf '  %s%2d%s  %s%-10s%s %-22s %s\n' \
+      "$B" "$i" "$R" "$CYN" "$g" "$R" "$(status_label "$g")" "$mark"
     printf '      %s%s%s\n' "$DIM" "${GROUP_DESC[$g]}" "$R"
     i=$((i + 1))
   done
@@ -1124,6 +1899,29 @@ pick_reset_defaults() {
   done
 }
 
+# The checkbox is DESIRED STATE, so it must start from reality: anything
+# already on the box begins checked. On a box with nothing installed there is
+# no reality to reflect, so fall back to the defaults.
+pick_reset_current() {
+  local i g
+  if box_is_fresh; then pick_reset_defaults; return 0; fi
+  for i in "${!GROUP_ORDER[@]}"; do
+    g="${GROUP_ORDER[$i]}"
+    case "${STATUS[$g]}" in
+      installed|partial) CHECKED[i]=1 ;;
+      *)                 CHECKED[i]=0 ;;
+    esac
+  done
+}
+
+status_label() {
+  case "${STATUS[$1]}" in
+    installed) printf '%sinstalled%s' "$GRN" "$R" ;;
+    partial)   printf '%spartial%s'   "$YLW" "$R" ;;
+    *)         printf '%s—%s'         "$DIM" "$R" ;;
+  esac
+}
+
 pick_set_all() {
   local i g want="$1"
   for i in "${!GROUP_ORDER[@]}"; do
@@ -1133,23 +1931,34 @@ pick_set_all() {
 }
 
 pick_render_row() {
-  local i="$1" g box name desc pointer color avail
+  local i="$1" g box name desc pointer color avail stat pad
   g="${GROUP_ORDER[$i]}"
   if [ "${CHECKED[i]}" = 1 ]; then box="${GRN}[x]${R}"; else box="[ ]"; fi
   if [ "$i" = "$PICK_CUR" ]; then pointer="${B}${CYN}❯${R}"; else pointer=" "; fi
   if is_opt_in_only "$g"; then color="$YLW"; else color="$CYN"; fi
   name=$(printf '%-10s' "$g")
-  avail=$((PICK_COLS - 21))
+
+  # Status column is 9 visible chars ("installed"); pad by visible width since
+  # the label carries colour escapes that printf's %-9s would miscount.
+  stat="$(status_label "$g")"
+  case "${STATUS[$g]}" in
+    installed) pad="" ;;
+    partial)   pad="  " ;;
+    *)         pad="        " ;;
+  esac
+
+  # 2 indent + 2 pointer + 4 box + 11 name + 10 status = 29 columns of chrome
+  avail=$((PICK_COLS - 31))
   [ "$avail" -lt 12 ] && avail=12
   desc="${GROUP_DESC[$g]}"
   if [ "${#desc}" -gt "$avail" ]; then desc="${desc:0:$((avail - 1))}…"; fi
-  printf '  %s %s %s%s%s %s%s%s\n' \
-    "$pointer" "$box" "$color" "$name" "$R" "$DIM" "$desc" "$R"
+  printf '  %s %s %s%s%s %s%s %s%s%s\n' \
+    "$pointer" "$box" "$color" "$name" "$R" "$stat" "$pad" "$DIM" "$desc" "$R"
 }
 
 pick_hint() {
-  printf '  %s↑↓%s move  %sspace%s toggle  %sa%s all  %sn%s none  %sd%s defaults  %s⏎%s install  %sq%s quit\n' \
-    "$B" "$R" "$B" "$R" "$B" "$R" "$B" "$R" "$B" "$R" "$B" "$R" "$B" "$R"
+  printf '  %s↑↓%s move  %sspace%s toggle  %sa%s all  %sn%s none  %sd%s defaults  %sc%s current  %s⏎%s apply  %sq%s quit\n' \
+    "$B" "$R" "$B" "$R" "$B" "$R" "$B" "$R" "$B" "$R" "$B" "$R" "$B" "$R" "$B" "$R"
 }
 
 pick_move() {
@@ -1164,7 +1973,7 @@ pick_interactive() {
   fi
 
   PICK_COLS=$( (command -v tput >/dev/null && tput cols) 2>/dev/null || echo 80 )
-  pick_reset_defaults
+  pick_reset_current
   PICK_CUR=0
 
   local n=${#GROUP_ORDER[@]}
@@ -1204,6 +2013,7 @@ pick_interactive() {
       a|A) pick_set_all 1 ;;
       n|N) pick_set_all 0 ;;
       d|D) pick_reset_defaults ;;
+      c|C) pick_reset_current ;;
       '')  break ;;
       q|Q)
         restore_tty; trap - EXIT INT TERM
@@ -1239,15 +2049,28 @@ usage() {
 ${B}install-tools.sh${R} — install the devsys tool set, by group, system-wide.
 
   sudo ./install-tools.sh                 arrow-key picker (space to toggle)
-  sudo ./install-tools.sh --list          list groups and contents
+  sudo ./install-tools.sh --list          list groups, contents and status
   sudo ./install-tools.sh <group>...      install named groups (deps auto-added)
   sudo ./install-tools.sh all             everything except: ${OPT_IN_ONLY[*]}
   sudo ./install-tools.sh --check-logins  probe tool auth, offer to log in
+  sudo ./install-tools.sh --cleanup       show size + last-use per group,
+                                          flag what looks unused
+
+Run it with sudo from YOUR account, not as root: \$SUDO_USER decides whose
+logins are checked, who is offered the docker group, and who owns per-user
+config. As bare root, all of that targets root instead.
+
+The picker is DESIRED STATE. It opens reflecting what is already installed —
+checked means "should be on this box". Unchecking an installed group UNINSTALLS
+it (with confirmation); removals cascade to dependents. Naming groups on the
+command line only ever installs, never removes. \`base\` can never be removed.
 
 Options:
   --dry-run        print the commands instead of running them
   -y, --yes        don't prompt for confirmation (implies yes to ai-yolo)
   --check-logins   only run the login check
+  --cleanup        report installed groups with size, last-use estimate and
+                   shell-history hits, then offer the picker to remove them
   --no-login-check skip the login check after installing
   -l, --list       list groups and exit
   -h, --help       this text
@@ -1262,6 +2085,9 @@ EOF
 # ------------------------------------------------------------------- main ---
 
 SKIP_LOGIN_CHECK=0
+LIST_ONLY=0
+CLEANUP_ONLY=0
+REMOVE_MODE=0
 
 main() {
   local args=()
@@ -1270,8 +2096,10 @@ main() {
       --dry-run)        DRY_RUN=1 ;;
       -y|--yes)         ASSUME_YES=1 ;;
       --check-logins)   CHECK_ONLY=1 ;;
+      --cleanup)        CLEANUP_ONLY=1 ;;
+      --remove)         REMOVE_MODE=1 ;;
       --no-login-check) SKIP_LOGIN_CHECK=1 ;;
-      -l|--list)        print_groups; exit 0 ;;
+      -l|--list)        LIST_ONLY=1 ;;
       -h|--help)        usage; exit 0 ;;
       -*)               die "unknown option: $1 (try --help)" ;;
       *)                args+=("$1") ;;
@@ -1281,6 +2109,24 @@ main() {
 
   detect_os
   resolve_target_user
+  adopt_system_env
+
+  if [ "$LIST_ONLY" = 1 ]; then
+    scan_status
+    print_groups
+    exit 0
+  fi
+
+  if [ "$CLEANUP_ONLY" = 1 ]; then
+    scan_status
+    cleanup_report
+    # Offer the picker straight away so unchecking can act on what was shown.
+    if [ -t 0 ] && [ "$DRY_RUN" = 0 ] && confirm "Open the picker to remove some of it?"; then
+      require_root
+    else
+      exit 0
+    fi
+  fi
 
   if [ "$CHECK_ONLY" = 1 ]; then
     check_logins
@@ -1290,8 +2136,35 @@ main() {
 
   [ "$DRY_RUN" = 1 ] || require_root
 
-  local selected=() g
+  scan_status
+
+  local selected=() g removals=() unchecked=() from_picker=0
+
+  # Explicit uninstall of named groups — the scriptable counterpart to
+  # unchecking them in the picker. Same cascade and same confirmation.
+  if [ "$REMOVE_MODE" = 1 ]; then
+    [ ${#args[@]} -gt 0 ] || die "--remove needs group names (try --list)"
+    for g in "${args[@]}"; do
+      valid_group "$g" || die "unknown group: $g (try --list)"
+      if is_protected "$g"; then die "$g is protected and cannot be removed"; fi
+      if [ "${STATUS[$g]}" = missing ]; then
+        info "$g is not installed — nothing to remove"
+      else
+        unchecked+=("$g")
+      fi
+    done
+    [ ${#unchecked[@]} -gt 0 ] || { step "nothing to do"; printf '\n'; exit 0; }
+    append_lines removals "$(expand_removals "${unchecked[@]}")"
+    confirm_and_remove removals
+    for g in "${removals[@]}"; do remove_group "$g"; done
+    step "done"
+    info "removed: ${removals[*]:-nothing}"
+    printf '\n'
+    exit 0
+  fi
+
   if [ ${#args[@]} -eq 0 ]; then
+    from_picker=1
     pick_interactive
     selected=("${PICKED[@]}")
   else
@@ -1304,15 +2177,55 @@ main() {
       fi
     done
   fi
-  [ ${#selected[@]} -gt 0 ] || die "nothing selected"
+  # Removals are DESIRED-STATE semantics and therefore only ever come from the
+  # picker. `install-tools.sh node` must never be read as "remove everything
+  # else" — naming groups means install those, full stop.
+  if [ "$from_picker" = 1 ]; then
+    local i
+    for i in "${!GROUP_ORDER[@]}"; do
+      g="${GROUP_ORDER[$i]}"
+      [ "${CHECKED[i]}" = 1 ] && continue
+      [ "${STATUS[$g]}" = missing ] && continue
+      unchecked+=("$g")
+    done
+    if [ ${#unchecked[@]} -gt 0 ]; then
+      append_lines removals "$(expand_removals "${unchecked[@]}")"
+    fi
+  fi
 
-  local plan=()
-  append_lines plan "$(resolve "${selected[@]}")"
+  [ ${#selected[@]} -gt 0 ] || [ ${#removals[@]} -gt 0 ] || die "nothing selected"
 
-  printf '\n%sPlan%s%s (deps resolved):%s %s\n' "$B" "$R" "$DIM" "$R" "${plan[*]}"
+  # Already-installed groups need no work; partial ones get repaired.
+  local plan=() resolved=()
+  if [ ${#selected[@]} -gt 0 ]; then
+    append_lines resolved "$(resolve "${selected[@]}")"
+    for g in "${resolved[@]}"; do
+      if [ "$from_picker" = 1 ] && [ "${STATUS[$g]}" = installed ]; then continue; fi
+      plan+=("$g")
+    done
+  fi
+
+  if [ ${#removals[@]} -gt 0 ]; then
+    confirm_and_remove removals
+  fi
+
+  if [ ${#plan[@]} -eq 0 ] && [ ${#removals[@]} -eq 0 ]; then
+    step "nothing to do"
+    info "everything you selected is already installed"
+    printf '\n'
+    exit 0
+  fi
+
+  printf '\n%sPlan%s%s (deps resolved):%s %s\n' "$B" "$R" "$DIM" "$R" "${plan[*]:-—}"
   printf '%sTarget:%s system-wide (%s, %s, %s) · logins for: %s\n' \
     "$DIM" "$R" "$BIN_DIR" "/opt" "$CONF_DIR" "$TARGET_USER"
   [ "$DRY_RUN" = 1 ] && printf '%s(dry run — nothing will be installed)%s\n' "$YLW" "$R"
+
+  # Removals run first: tearing down before building avoids a half-removed
+  # group being immediately reinstalled by a dependency of something else.
+  for g in "${removals[@]}"; do
+    remove_group "$g"
+  done
 
   local i
   for i in "${!plan[@]}"; do
@@ -1324,8 +2237,14 @@ main() {
     fi
   done
 
+  # Late, so it picks up tools installed by any group in this run.
+  if [ ${#plan[@]} -gt 0 ]; then
+    install_completions
+  fi
+
   step "done"
-  info "installed groups: ${plan[*]}"
+  [ ${#plan[@]} -gt 0 ]     && info "installed: ${plan[*]}"
+  [ ${#removals[@]} -gt 0 ] && info "removed:   ${removals[*]}"
   info "open a new shell, or: ${B}exec zsh -l${R}"
 
   if [ "$DRY_RUN" = 0 ] && [ "$SKIP_LOGIN_CHECK" = 0 ]; then
