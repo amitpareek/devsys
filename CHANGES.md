@@ -5,7 +5,91 @@ Dates are UTC. Format follows [Keep a Changelog](https://keepachangelog.com).
 
 ## [Unreleased]
 
+### Changed
+
+- **`install-tools.sh` now installs system-wide and targets Debian
+  12/13.** Reworked from the earlier `$HOME`-relative design because
+  each VM belongs to one developer but every account on it should see
+  the tools. Binaries go to `/usr/local/bin`, the shared mise runtime
+  store to `/opt/mise` (+ `/etc/mise/config.toml`), bun/flyctl to
+  `/opt`, .NET to `/usr/share/dotnet`, generated config to
+  `/etc/devsys/`, and shell hooks into `/etc/profile.d/devsys.sh`,
+  `/etc/zsh/zshenv` and `/etc/zsh/zshrc`. Requires root. Logins stay
+  per-user — everything auth-related targets `$SUDO_USER`.
+
+  Because `sudo bash <(curl ...)` cannot reopen a process-substitution
+  fd, the documented one-liner is now download-then-run.
+
+- **`runtimes` split into `mise`, `node` and `python`, and a separate
+  `dotnet` group added** — one developer may want JS and C# on the same
+  box without dragging in the other's toolchain.
+
+- **`tailscale` is now the first group and pauses afterwards.** It
+  enables `tailscaled` at boot, offers to run `tailscale up`, then asks
+  whether to continue — so a VM can be put on the tailnet and handed to
+  a developer who finishes the install themselves. Declining prints the
+  exact resume command. `tailscale` deliberately has no group
+  dependencies so it can run before the full `base` group; a small
+  `ensure_prereqs` step installs just ca-certificates/curl/gnupg.
+
 ### Added
+
+- **`docker` group** — Docker CE from `download.docker.com`, with
+  `docker-buildx-plugin` and `docker-compose-plugin`. The repo suite is
+  probed before use, so an unsupported release fails with a readable
+  message instead of an apt 404, and falls back to the newest published
+  suite. Adding your user to the `docker` group is a prompt, not a
+  default, because that grants effective root.
+
+- **`dotnet` group** — .NET SDK from the LTS channel via
+  `dotnet-install.sh` (works on amd64 and arm64, and on Debian and
+  Ubuntu alike, unlike the Microsoft apt feed). Installs the ICU and
+  OpenSSL runtime deps, picking the right versioned package name per
+  release (`libicu76`/`libicu72`, `libssl3t64`/`libssl3`).
+
+- **`auth` group + [`devsys-auth`](./devsys-auth.sh)** — moves tool
+  logins between machines you own as an age-encrypted bundle:
+  `devsys-auth list|export|import`. Covers gh, fly, neonctl, claude,
+  gemini, codex, opencode, docker and npm credential files only — no
+  general config, no history files. Encryption is mandatory
+  (passphrase, or `-r` for an age public key with `-i` on import);
+  bundles are `0600`; import backs up anything it would overwrite and
+  re-applies `0600`. Tailscale is excluded because node identity is
+  per-machine.
+
+- **Login checking.** After installing (or via `--check-logins`) the
+  script probes each auth-requiring tool as the invoking user, reports
+  logged-in / not-logged-in, and offers to run each login command right
+  there. Also reports whether `tailscaled` is enabled at boot, since
+  being logged in is worthless if the daemon doesn't come back after a
+  reboot.
+
+### Fixed
+
+- **Nondeterministic package detection under `set -o pipefail`.**
+  `apt_has` used `apt-cache policy | grep -q`; `grep -q` exits at the
+  first match, `apt-cache` then dies of SIGPIPE, and `pipefail` reports
+  the whole pipeline as failed — so an available package read as
+  missing depending purely on whether its output fit the pipe buffer.
+  This is why `libssl3t64` was reported unavailable on trixie while
+  `libicu76` succeeded in the same run, and why `eza`/`glow` fell back
+  to third-party repos unpredictably. Rewritten pipe-free with bash
+  string matching; verified 30/30 stable per package on both Debian 12
+  and 13. The same trap in the docker-group membership check was fixed
+  too.
+
+- **`npm` not found immediately after installing node.** `env.sh` only
+  adds PATH entries for directories that already exist, so
+  `/opt/mise/shims` — created by the first mise install — was missing
+  from the running script's PATH, and the `node` group failed at its own
+  `pnpm` step. `mise_use` now splices the shims directory into PATH for
+  the remainder of the run.
+
+- **Removed the `/dev/fd` dependency.** Group resolution used
+  `mapfile < <(...)`; process substitution needs `/dev/fd`, which is
+  absent in minimal chroots and some CI images, where the script died
+  with `/dev/fd/63: No such file or directory`. Replaced with a
+  herestring-based helper.
 
 - **`nano` and `micro` editors, plus a default `$EDITOR`.** The image
   previously baked only `vim`. `nano` happened to be present on some

@@ -259,69 +259,135 @@ you shell in.
 All npm-installed CLIs live at `~/.npm-global/bin/`, which is on PATH by
 default. mise shims are in `~/.local/share/mise/shims/`.
 
-## Installing the tool set on a plain machine
+## Installing the tool set on a plain VM
 
-Sometimes you want these tools on a box that isn't the container — a
-VPS, a CI runner, someone else's Ubuntu laptop.
-[`install-tools.sh`](./install-tools.sh) installs the same set on any
-Ubuntu/Debian host, grouped, with an arrow-key picker so you take only
-what you want.
+For boxes that aren't the container — a Debian 12/13 VM, a VPS, a CI
+runner. [`install-tools.sh`](./install-tools.sh) installs the same set,
+grouped, with an arrow-key picker.
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/amitpareek/devsys/main/install-tools.sh)
+curl -fsSL https://raw.githubusercontent.com/amitpareek/devsys/main/install-tools.sh -o /tmp/devsys-install.sh && sudo bash /tmp/devsys-install.sh
 ```
 
-Process substitution rather than `curl | bash` — piping into bash
-consumes stdin, which would break the picker.
+Download-then-run rather than `curl | bash`: piping consumes stdin so
+the picker couldn't read your keys, and `sudo bash <(curl ...)` can't
+reopen the process-substitution fd.
 
 ```
-  devsys tool groups  select what to install
+  devsys tool groups  select what to install (system-wide)
 
-  ❯ [x] base       apt essentials — curl, wget, git, zsh, vim, unzip, rsync…
-    [x] build      compiler toolchain — build-essential, pkg-config, python…
+  ❯ [x] tailscale  tailscale + tailscaled via the official installer
+    [x] base       apt essentials — curl, wget, git, zsh, vim, unzip, rsync…
+    [x] build      compiler toolchain — build-essential, pkg-config, system…
     [x] editors    nano + micro (ctrl+s/ctrl+q, mouse, syntax highlighting)…
     [x] cli        modern CLI kit — ripgrep, fd, bat, fzf, eza, htop, ncdu,…
     [x] shell      zsh setup — starship prompt, direnv, tmux (mouse on), z …
-    [x] runtimes   mise + node@lts + python@3.12, pnpm, bun
+    [x] mise       mise version manager (shared runtime store in /opt/mise)
+    [x] node       JS/TS — node@lts, npm, pnpm, bun
+    [x] python     Python 3.12 via mise (separate from the system python3)
+    [ ] dotnet     .NET SDK (LTS channel) + runtime deps; dotnet on PATH
+    [ ] docker     Docker CE engine + CLI, buildx and compose v2 plugins
     [ ] cloud      gh (GitHub), flyctl (Fly.io), neonctl (Neon)
     [ ] ai         AI coding CLIs — claude, gemini, codex, opencode
     [ ] ai-yolo    auto-approve configs for the AI CLIs — DANGEROUS outside…
     [ ] data       redis-server, postgresql-client (psql)
     [ ] notes      obsidian-headless (ob)
-    [ ] tailscale  tailscale + tailscaled via the official installer
+    [x] auth       devsys-auth — move tool logins between your machines as…
 
   ↑↓ move  space toggle  a all  n none  d defaults  ⏎ install  q quit
 ```
 
-Non-interactive forms, for scripting:
+Non-interactive forms:
 
 ```bash
-./install-tools.sh --list            # show groups and contents
-./install-tools.sh cli shell         # named groups; deps resolved for you
-./install-tools.sh all               # everything except ai-yolo
-./install-tools.sh --dry-run all     # print the commands, change nothing
+sudo ./install-tools.sh --list            # groups and contents
+sudo ./install-tools.sh node dotnet       # named groups; deps resolved
+sudo ./install-tools.sh all               # everything except ai-yolo
+sudo ./install-tools.sh --dry-run all     # print commands, change nothing
+sudo ./install-tools.sh --check-logins    # just probe tool auth
 ```
 
-Notable differences from the image, all deliberate:
+### System-wide, so every user gets the tools
 
-- **Nothing is clobbered.** Everything lands under `$HOME` (or `/usr`
-  via apt). Your `~/.zshrc`, `~/.bashrc`, and `~/.tmux.conf` are only
-  ever *appended* to, inside a `# >>> devsys env >>>` marker block.
-  Generated config lives in `~/.devsys/` (`env.sh` for PATH/env,
-  `rc.zsh` for the interactive zsh bits). Existing AI-CLI configs are
+Installs go to `/usr/local/bin`, `/opt` and `/etc` — not one user's
+`$HOME` — so any account on the VM resolves them. Requires root.
+
+| What | Where |
+|---|---|
+| Binaries, symlinks | `/usr/local/bin` |
+| Shared runtime store (mise) | `/opt/mise` + `/etc/mise/config.toml` |
+| bun, flyctl | `/opt/bun`, `/opt/fly` |
+| .NET SDK | `/usr/share/dotnet` |
+| Generated env / zsh config | `/etc/devsys/{env.sh,rc.zsh,yolo.zsh}` |
+| Shell hooks | `/etc/profile.d/devsys.sh`, `/etc/zsh/zshenv`, `/etc/zsh/zshrc` |
+
+Logins stay per-user. The auth check targets `$SUDO_USER`, not root.
+
+### Tailscale first, then hand the VM over
+
+`tailscale` is deliberately the first group. It installs, enables
+`tailscaled` at boot (so the box rejoins the tailnet after a restart),
+offers to run `tailscale up`, and then **pauses**:
+
+```
+── Tailscale is done — this box is now reachable.
+    still to install: base build editors cli shell mise node python auth
+    you can hand the VM over now and let the developer finish.
+
+    Continue installing the rest now? [y/N]
+```
+
+Answer `n` and it prints the exact command to resume, so whoever picks
+up the box can finish the install themselves.
+
+### Sharing logins across machines — `devsys-auth`
+
+Logging into gh, fly, claude, gemini, codex and the rest on five VMs by
+hand is the tedious part. The `auth` group installs
+[`devsys-auth`](./devsys-auth.sh): log in once, export an encrypted
+bundle, import it everywhere else.
+
+```bash
+devsys-auth list                          # what credentials exist here
+devsys-auth export -o ~/work/creds.age    # age-encrypted, mode 0600
+devsys-auth import ~/work/creds.age       # on the other machines
+```
+
+Covers `~/.config/gh/hosts.yml`, `~/.fly/config.yml`,
+`~/.config/neonctl/credentials.json`, `~/.claude/.credentials.json`,
+`~/.gemini/oauth_creds.json`, `~/.codex/auth.json`,
+`~/.local/share/opencode/auth.json`, `~/.docker/config.json`, `~/.npmrc`
+— only files that are actually auth material. Encryption is mandatory
+(passphrase by default, `-r` for an age public key). Import backs up
+anything it would overwrite and re-applies `0600`.
+
+Since `~/work` is already shared over Taildrive, dropping the bundle
+there is usually the easiest transport.
+
+**Tailscale is excluded on purpose** — a node's identity is
+per-machine and can't be copied, so run `sudo tailscale up` on each box.
+
+> The bundle is equivalent to a password vault for every account in it.
+> Keep it `0600`, never commit it, and delete stale copies. This model
+> suits a handful of long-lived machines you own; for ephemeral or
+> multi-tenant fleets use short-lived scoped tokens instead.
+
+### Other deliberate choices
+
+- **Nothing is clobbered.** `/etc/zsh/zshrc`, `/etc/zsh/zshenv` and
+  `/etc/tmux.conf` are only ever *appended* to, inside a
+  `# >>> devsys env >>>` marker block. Existing AI-CLI configs are
   left alone rather than overwritten.
-- **`ai-yolo` is opt-in and off by default.** The image's
-  auto-approve configs (`bypassPermissions`, `danger-full-access`,
-  `--yolo`) are safe in a tailnet-only throwaway container and *not*
-  safe on a machine you care about, so `all` skips this group and
-  selecting it requires typing `yolo` to confirm.
-- **`sudo` only where apt needs it.** Run as any user with sudo, or as
-  root. Nothing else needs elevation — `starship`, `lazygit`, `mise`,
-  `bun` and the npm globals all install into `$HOME`.
-- **Re-runnable.** Every step checks first, so re-running only fills
-  in what's missing. Use it to top up a box after adding a group.
+- **`ai-yolo` is opt-in.** `bypassPermissions` /
+  `danger-full-access` / `--yolo` are fine in a tailnet-only throwaway
+  container and not on a machine you care about, so `all` skips it and
+  selecting it requires typing `yolo`.
+- **Docker group membership is a prompt, not a default** — it grants
+  effective root, so you're asked before your user is added.
+- **Re-runnable.** Every step checks first, so re-running only fills in
+  what's missing.
 
-Requires Ubuntu/Debian — it refuses to run anywhere else rather than
+Debian 12/13 and Ubuntu only; it refuses to run elsewhere rather than
 half-installing.
 
 ## Obsidian notes
