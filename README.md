@@ -428,6 +428,62 @@ Then it **pauses**:
 Answer `n` and it prints the exact command to resume, so whoever picks
 up the box can finish the install themselves.
 
+### Provisioning a VM from scratch — cloud-init
+
+[`cloud-config.yaml`](./cloud-config.yaml) is cloud-init user-data that
+takes a blank Debian 12/13 VM to a ready dev box unattended. Paste it as
+"user data" when creating the VM — it works anywhere cloud-init runs
+(Hetzner, DigitalOcean, Vultr, AWS, GCP, Azure, Proxmox, multipass,
+libvirt).
+
+Edit four things before using it:
+
+| # | What | Why |
+|---|---|---|
+| 1 | `hostname:` | also becomes the tailnet machine name |
+| 2 | `users[0].name` | the developer who gets the box |
+| 3 | `ssh_authorized_keys` | their public key |
+| 4 | `TS_AUTHKEY` | optional — see below |
+
+It sets the hostname, creates the developer with passwordless sudo and
+their SSH key, installs the chosen groups system-wide, and switches their
+shell to zsh. Progress lands in `/var/log/devsys-bootstrap.log`, and
+`/var/lib/devsys-bootstrap.done` marks completion.
+
+Settings live in `/etc/devsys/bootstrap.conf`:
+
+```sh
+TS_AUTHKEY=""                # empty = install Tailscale, don't join
+DEVSYS_USER="dev"            # who per-user config belongs to
+DEVSYS_GROUPS="tailscale base build editors cli shell mise node python auth"
+DEVSYS_REF="main"            # pin to a tag/commit for reproducible rebuilds
+```
+
+Quote any value containing spaces — the file is sourced by a shell, so an
+unquoted `DEVSYS_GROUPS` would have its extra words run as a command.
+
+**On `TS_AUTHKEY`:** leave it empty and the VM installs Tailscale but
+waits for you to run `sudo tailscale up`. Fill it in and the VM joins
+itself with the usual flags. Be deliberate about that choice — user-data
+is readable from the instance metadata service by anything running on the
+box, and many providers keep it retrievable for the instance's whole
+life. If you use one, prefer a short-lived, tagged, single-use key and
+treat it as burned once the VM boots. The bootstrap blanks it from
+`/etc/devsys/bootstrap.conf` afterwards, which removes it from disk but
+not from metadata.
+
+The install runs with `--no-login-check`, because OAuth flows need a
+browser and a human. Once the developer is in:
+
+```bash
+install-tools.sh --check-logins
+```
+
+Two environment variables make this work, and are useful on their own:
+`DEVSYS_USER` tells the installer which account owns the box (cloud-init
+runs as root with no `$SUDO_USER`, so without it every per-user action
+would target root), and `TS_AUTHKEY` triggers the unattended join.
+
 ### Sharing logins across machines — `devsys-auth`
 
 Logging into gh, fly, claude, gemini, codex and the rest on five VMs by

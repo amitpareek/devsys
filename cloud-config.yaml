@@ -1,0 +1,143 @@
+#cloud-config
+#
+# devsys VM bootstrap — cloud-init user-data for Debian 12/13.
+#
+# Boots a fresh VM into a ready dev box: sets the hostname, creates your
+# developer account, installs the devsys tool set system-wide, and optionally
+# joins your tailnet unattended.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# EDIT THESE FOUR THINGS before using it:
+#   1. hostname            — also becomes the tailnet machine name
+#   2. users[0].name       — the developer who gets the box
+#   3. ssh_authorized_keys — their public key(s)
+#   4. TS_AUTHKEY          — optional; see the security note below
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Works anywhere cloud-init runs: Hetzner, DigitalOcean, Vultr, AWS, GCP,
+# Azure, Proxmox, multipass, libvirt. Paste it as "user data" when creating
+# the VM.
+#
+# Progress and errors land in /var/log/devsys-bootstrap.log, and
+# /var/lib/devsys-bootstrap.done is written when it finishes.
+
+# 1. Hostname — the installer derives the tailnet name from this.
+hostname: devbox-01
+manage_etc_hosts: true
+
+# 2 + 3. The developer who gets this VM.
+users:
+  - name: dev
+    # Shell stays bash here on purpose: cloud-init creates users BEFORE
+    # packages are installed, so /bin/zsh does not exist yet and setting it
+    # now would leave the account with a broken shell. The bootstrap script
+    # switches it to zsh after the shell group is installed.
+    shell: /bin/bash
+    groups: [sudo]
+    sudo: ['ALL=(ALL) NOPASSWD:ALL']
+    lock_passwd: true
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAAREPLACE_WITH_YOUR_PUBLIC_KEY you@example.com
+
+package_update: true
+package_upgrade: false
+
+# Only what's needed to fetch the installer; it handles everything else.
+packages:
+  - ca-certificates
+  - curl
+
+write_files:
+  # 4. Bootstrap settings. Mode 0600 because TS_AUTHKEY is a credential.
+  #
+  # SECURITY NOTE on TS_AUTHKEY: user-data is readable from the instance
+  # metadata service by anything running on this VM, and many providers keep
+  # it retrievable for the life of the instance. Leave it EMPTY and the VM
+  # installs Tailscale but waits for you to run `sudo tailscale up` yourself.
+  # If you do use one, prefer a short-lived, tagged, single-use key and treat
+  # it as burned once the VM boots.
+  - path: /etc/devsys/bootstrap.conf
+    permissions: '0600'
+    owner: root:root
+    content: |
+      # This file is sourced by the bootstrap script, so every value with
+      # spaces MUST be quoted — otherwise the shell reads the extra words as
+      # a command to run.
+
+      # Leave empty to install Tailscale without joining.
+      TS_AUTHKEY=""
+
+      # The account that owns this box. Per-user things (docker group,
+      # login checks, ai-yolo config) are applied to this user.
+      DEVSYS_USER="dev"
+
+      # Groups to install. See: install-tools.sh --list
+      # ai-yolo is deliberately excluded — it disables AI-CLI approval
+      # prompts for every user. Add it only on a disposable VM.
+      DEVSYS_GROUPS="tailscale base build editors cli shell mise node python auth"
+
+      # Pin to a commit/tag instead of main for reproducible rebuilds.
+      DEVSYS_REF="main"
+
+  - path: /usr/local/sbin/devsys-bootstrap.sh
+    permissions: '0755'
+    owner: root:root
+    content: |
+      #!/usr/bin/env bash
+      # Installed by cloud-init. Safe to re-run: the installer is idempotent.
+      set -euo pipefail
+
+      LOG=/var/log/devsys-bootstrap.log
+      exec >>"$LOG" 2>&1
+      echo "=== devsys bootstrap starting: $(date -Is) ==="
+
+      # shellcheck disable=SC1091
+      set -a; . /etc/devsys/bootstrap.conf; set +a
+
+      : "${DEVSYS_USER:=dev}"
+      : "${DEVSYS_REF:=main}"
+      : "${DEVSYS_GROUPS:=tailscale base editors cli shell mise node}"
+      RAW="https://raw.githubusercontent.com/amitpareek/devsys/${DEVSYS_REF}"
+
+      echo "--- fetching install-tools.sh (ref: $DEVSYS_REF)"
+      curl -fsSL --retry 5 --retry-delay 3 \
+        "$RAW/install-tools.sh" -o /usr/local/sbin/devsys-install.sh
+      chmod +x /usr/local/sbin/devsys-install.sh
+
+      # --no-login-check: OAuth flows need a browser and a human. The
+      # developer runs `install-tools.sh --check-logins` after they SSH in.
+      # -y: no prompts, and it also skips the hand-over pause.
+      echo "--- installing groups: $DEVSYS_GROUPS"
+      # shellcheck disable=SC2086
+      DEVSYS_USER="$DEVSYS_USER" TS_AUTHKEY="${TS_AUTHKEY:-}" \
+        bash /usr/local/sbin/devsys-install.sh -y --no-login-check $DEVSYS_GROUPS
+
+      # zsh exists now, so the account can safely be switched to it.
+      if command -v zsh >/dev/null 2>&1 && id "$DEVSYS_USER" >/dev/null 2>&1; then
+        chsh -s "$(command -v zsh)" "$DEVSYS_USER" || true
+        echo "--- default shell for $DEVSYS_USER: $(command -v zsh)"
+      fi
+
+      # The key has served its purpose; don't leave it on disk. (It may still
+      # be retrievable from instance metadata — see the note in the env file.)
+      if [ -n "${TS_AUTHKEY:-}" ]; then
+        sed -i 's/^TS_AUTHKEY=.*/TS_AUTHKEY=/' /etc/devsys/bootstrap.conf
+        echo "--- cleared TS_AUTHKEY from /etc/devsys/bootstrap.conf"
+      fi
+
+      touch /var/lib/devsys-bootstrap.done
+      echo "=== devsys bootstrap finished: $(date -Is) ==="
+
+      if command -v tailscale >/dev/null 2>&1; then
+        tailscale status || true
+      fi
+
+runcmd:
+  - [ bash, /usr/local/sbin/devsys-bootstrap.sh ]
+
+final_message: |
+  devsys bootstrap complete after $UPTIME seconds.
+  Log:    /var/log/devsys-bootstrap.log
+  Next:   ssh in, then run
+            install-tools.sh --check-logins   # authenticate gh, fly, AI CLIs
+            sudo tailscale up                 # only if TS_AUTHKEY was empty

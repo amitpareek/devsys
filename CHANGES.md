@@ -7,6 +7,48 @@ Dates are UTC. Format follows [Keep a Changelog](https://keepachangelog.com).
 
 ### Added
 
+- **[`cloud-config.yaml`](./cloud-config.yaml)** — cloud-init user-data
+  that provisions a blank Debian 12/13 VM unattended: sets the hostname
+  (which becomes the tailnet name), creates the developer account with
+  passwordless sudo and their SSH key, installs the chosen groups
+  system-wide, and switches their shell to zsh. Generic cloud-init, so it
+  works on Hetzner, DigitalOcean, Vultr, AWS, GCP, Azure, Proxmox,
+  multipass and libvirt alike. Settings live in
+  `/etc/devsys/bootstrap.conf` (`TS_AUTHKEY`, `DEVSYS_USER`,
+  `DEVSYS_GROUPS`, `DEVSYS_REF` — pin the ref for reproducible rebuilds).
+  Logs to `/var/log/devsys-bootstrap.log`, marks completion with
+  `/var/lib/devsys-bootstrap.done`.
+
+  `TS_AUTHKEY` is an opt-in placeholder rather than a requirement: empty
+  means install Tailscale and wait for a human, set means join
+  unattended. Documented with the caveat that user-data is readable from
+  the instance metadata service, so a short-lived tagged key should be
+  treated as burned once the VM boots; the bootstrap blanks it from disk
+  afterwards, which does not remove it from metadata.
+
+  The account's shell is deliberately `bash` in the `users:` block and
+  switched to zsh only after install — cloud-init creates users before
+  packages, so naming `/bin/zsh` up front would leave a broken shell.
+
+- **`DEVSYS_USER` and `TS_AUTHKEY` environment support in
+  `install-tools.sh`**, needed for any unattended run. cloud-init's
+  `runcmd` executes as root with no `$SUDO_USER`, so without `DEVSYS_USER`
+  the docker group, ai-yolo seeding and login checks would all silently
+  target root rather than the developer receiving the VM; it errors out if
+  the named user doesn't exist. `TS_AUTHKEY` joins the tailnet with the
+  standard flag set, and with neither a key nor a terminal the node is
+  left unjoined instead of running a bare `tailscale up` that would block
+  until timeout.
+
+### Fixed
+
+- **The login check could fire OAuth logins unattended.** `--yes` made
+  `confirm()` auto-accept, so a non-interactive run with `-y` would have
+  attempted `gh auth login` with no terminal to complete it. It now lists
+  the commands to run and attempts nothing when stdin isn't a tty.
+
+### Added
+
 - **The picker is now desired state, and re-running shows what's
   installed.** It opens reflecting reality — each group is probed and
   labelled `installed` / `partial` / `—`, and anything present starts
