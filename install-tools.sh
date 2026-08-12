@@ -157,7 +157,13 @@ require_root() {
 TARGET_USER=""
 TARGET_HOME=""
 resolve_target_user() {
-  TARGET_USER="${SUDO_USER:-$(id -un)}"
+  # DEVSYS_USER exists for unattended provisioning (cloud-init runcmd runs as
+  # root with no SUDO_USER, so without it every per-user action — docker group,
+  # ai-yolo seeding, login checks — would silently target root).
+  TARGET_USER="${DEVSYS_USER:-${SUDO_USER:-$(id -un)}}"
+  if [ -n "${DEVSYS_USER:-}" ] && ! getent passwd "$DEVSYS_USER" >/dev/null 2>&1; then
+    die "DEVSYS_USER=$DEVSYS_USER does not exist on this system"
+  fi
   TARGET_HOME="$(getent passwd "$TARGET_USER" 2>/dev/null | cut -d: -f6)"
   [ -n "$TARGET_HOME" ] || TARGET_HOME="${HOME:-/root}"
 }
@@ -1130,6 +1136,23 @@ install_tailscale() {
     return 0
   fi
 
+  # Unattended path: an auth key means no browser round-trip at all.
+  if [ -n "${TS_AUTHKEY:-}" ]; then
+    info "joining with TS_AUTHKEY (unattended)"
+    tailscale up --timeout=120s --auth-key="$TS_AUTHKEY" \
+      --hostname="$hn" "${TS_FLAGS[@]}" || true
+    ts_report_state "$hn"
+    return 0
+  fi
+
+  # No key and no terminal (cloud-init, CI): don't block on a prompt nobody
+  # can answer, and don't run a bare `up` that would sit there until timeout.
+  if [ ! -t 0 ]; then
+    info "not a terminal and no TS_AUTHKEY — leaving the node unjoined."
+    info "join later with: ${B}sudo tailscale up --hostname=$hn ${TS_FLAGS[*]}${R}"
+    return 0
+  fi
+
   if ! confirm "Run 'tailscale up' now to join the tailnet?"; then
     info "join later with: ${B}sudo tailscale up --hostname=$hn ${TS_FLAGS[*]}${R}"
     return 0
@@ -1600,6 +1623,18 @@ check_logins() {
 
   printf '\n'
   info "${B}${#pending[@]} tool(s) still need a login.${R}"
+
+  # These flows need a browser code or a paste, so never attempt them without
+  # a terminal — `--yes` must not be read as "log in unattended".
+  if [ ! -t 0 ]; then
+    local p2 pn pl
+    for p2 in "${pending[@]}"; do
+      IFS='|' read -r pn pl _ <<<"$p2"
+      info "  $pn — run: ${B}$pl${R}"
+    done
+    info "(no terminal here, so nothing was attempted)"
+    return 0
+  fi
   local p pname plogin pnote
   for p in "${pending[@]}"; do
     IFS='|' read -r pname plogin pnote <<<"$p"
