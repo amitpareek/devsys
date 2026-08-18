@@ -398,16 +398,34 @@ Logins stay per-user. The auth check targets `$SUDO_USER`, not root.
 
 `tailscale` is deliberately the first group. It installs, enables
 `tailscaled` at boot (so the box rejoins the tailnet after a restart),
-and joins with a fixed flag set:
+then asks three things in order:
+
+```
+    Enable Tailscale SSH on this node? [Y/n] y
+    Tags, comma-separated (blank for none; "tag:" added if you omit it): prod,dev
+    Auth key (blank to authenticate in a browser):
+```
+
+and joins with what you answered:
 
 ```bash
-tailscale up --hostname=<vm name> --ssh=true --accept-dns=true --accept-routes=true
+tailscale up --hostname=<vm name> --ssh=true \
+  --advertise-tags=tag:prod,tag:dev --accept-dns=true --accept-routes=true
 ```
+
+Tags get the `tag:` prefix added and are lowercased, so `prod, Dev`
+becomes `tag:prod,tag:dev`. Your ACL has to list you as a `tagOwner` for
+them. The auth key is read visibly on purpose — a silent read breaks
+paste in many terminals, the same reason `flysetup.sh` does it that way.
 
 The hostname comes from the machine's own hostname, sanitised to a DNS
 label (lowercased, non-alphanumerics to hyphens); override with
 `TS_HOSTNAME`. A node that's already joined gets `tailscale set` with the
 same flags rather than a blocking re-`up`.
+
+All three are skippable for unattended runs — preset `TS_SSH`, `TS_TAGS`
+and `TS_AUTHKEY` in the environment (as the cloud-config does) and no
+prompts appear.
 
 It runs with `--timeout`, then reports the backend state — a bare
 `tailscale up` blocks forever when your tailnet requires manual device

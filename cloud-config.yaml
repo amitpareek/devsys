@@ -2,36 +2,33 @@
 #
 # devsys VM bootstrap — cloud-init user-data for Debian 12/13.
 #
-# Boots a fresh VM into a ready dev box: sets the hostname, creates your
-# developer account, installs the devsys tool set system-wide, and optionally
-# joins your tailnet unattended.
+# Everything cloud-init can do declaratively, it does: apt repos via
+# apt.sources, every apt-installable tool via packages, the account via
+# users, config via write_files. runcmd is reserved for the tools that have
+# no Debian package at all and therefore no declarative form (see the list
+# at the bottom).
 #
 # ─────────────────────────────────────────────────────────────────────────────
-# EDIT THESE FOUR THINGS before using it:
+# EDIT before use:
 #   1. hostname            — also becomes the tailnet machine name
 #   2. users[0].name       — the developer who gets the box
 #   3. ssh_authorized_keys — their public key(s)
-#   4. TS_AUTHKEY          — optional; see the security note below
+#   4. TS_AUTHKEY          — optional; read the security note first
 # ─────────────────────────────────────────────────────────────────────────────
 #
 # Works anywhere cloud-init runs: Hetzner, DigitalOcean, Vultr, AWS, GCP,
-# Azure, Proxmox, multipass, libvirt. Paste it as "user data" when creating
-# the VM.
+# Azure, Proxmox, multipass, libvirt. Paste as "user data".
 #
-# Progress and errors land in /var/log/devsys-bootstrap.log, and
-# /var/lib/devsys-bootstrap.done is written when it finishes.
+# Logs: /var/log/devsys-bootstrap.log   Done marker: /var/lib/devsys-bootstrap.done
 
-# 1. Hostname — the installer derives the tailnet name from this.
 hostname: devbox-01
 manage_etc_hosts: true
 
-# 2 + 3. The developer who gets this VM.
 users:
   - name: dev
-    # Shell stays bash here on purpose: cloud-init creates users BEFORE
-    # packages are installed, so /bin/zsh does not exist yet and setting it
-    # now would leave the account with a broken shell. The bootstrap script
-    # switches it to zsh after the shell group is installed.
+    # bash on purpose. cloud-init creates users BEFORE packages, so /bin/zsh
+    # does not exist yet; naming it here leaves the account unable to log in.
+    # runcmd switches it to zsh once the shell packages are installed.
     shell: /bin/bash
     groups: [sudo]
     sudo: ['ALL=(ALL) NOPASSWD:ALL']
@@ -39,44 +36,165 @@ users:
     ssh_authorized_keys:
       - ssh-ed25519 AAAAREPLACE_WITH_YOUR_PUBLIC_KEY you@example.com
 
+# ── Third-party apt repos, declared natively ────────────────────────────────
+# $RELEASE expands to the distro codename, $KEY_FILE to where cloud-init put
+# the key. Four keys come from a keyserver (a few bytes each); only eza's is
+# inlined, because it is not on keyserver.ubuntu.com.
+#
+# Why keyid over inline keys: all five armoured keys total ~21 KB, and EC2
+# caps user-data at 16 KB. Fingerprints below were taken from each vendor's
+# published key, not from documentation.
+apt:
+  sources:
+    docker.list:
+      source: "deb [signed-by=$KEY_FILE] https://download.docker.com/linux/debian $RELEASE stable"
+      keyid: 9DC858229FC7DD38854AE2D88D81803C0EBFCD88
+      keyserver: keyserver.ubuntu.com
+
+    tailscale.list:
+      source: "deb [signed-by=$KEY_FILE] https://pkgs.tailscale.com/stable/debian $RELEASE main"
+      keyid: 2596A99EAAB33821893C0A79458CA832957F5868
+      keyserver: keyserver.ubuntu.com
+
+    github-cli.list:
+      source: "deb [signed-by=$KEY_FILE] https://cli.github.com/packages stable main"
+      keyid: 2C6106201985B60E6C7AC87323F3D4EA75716059
+      keyserver: keyserver.ubuntu.com
+
+    # glow. Debian 13 ships glow natively; harmless to have both.
+    charm.list:
+      source: "deb [signed-by=$KEY_FILE] https://repo.charm.sh/apt/ * *"
+      keyid: ED927B38BE981E53CA09153D03BBF595D4DFD35C
+      keyserver: keyserver.ubuntu.com
+
+    # eza. Not in Debian 12 or 13, and its key is not on any keyserver, so
+    # this is the one repo whose key has to be carried inline.
+    gierens.list:
+      source: "deb [signed-by=$KEY_FILE] http://deb.gierens.de stable main"
+      key: |
+        -----BEGIN PGP PUBLIC KEY BLOCK-----
+
+        mQINBGTejj8BEAC3Qdi6up8rkFvekeuZiGpuC5OTic+Nd/x6zacrtDKJwdVa6fw3
+        tVydFW1ELcw33ifWDztvgENqvgMuhcB/lnoDnaAhK8nzT0l+r0gQ7JptPH+8XsZx
+        PuIFRxgUkS6M45jrZApu/c3/PX3akiBuBnibd+sik72pVSi9pYm00I/yY/+u9Vvo
+        u4vy/PG/y4Kp1+ewbVyOnaTQoiJXgqceUYqNfhShcN7dssa/Td6G0xPhS1XeQZ81
+        QWwPNEzGWomGJ/igZPcm31qtIwcHXn3m8UZbCxUHHzseZ0hOOYqVSrSIj+U1RIma
+        rmcbdAAi1wQei0P142/Gkq1fLdscrZPc0b0L8JbZnymAvg2WWE6SQ3/7Ux0Y9hc3
+        wsXuiwU38Qg0EaDMSXyUKAbK+4/tuP9mbx4PyKuDUmjJnPTCvbJxe2kC8rdZrOgn
+        4qbwHY7FCEBpG28VhV07dwueZcFC/VCqGrbmrJC7rl6avT5xpOIRslUTJGmifx3Z
+        0hmL6rzTQz00FVNSXyxLnz1XYUTLm7QyzywTv8HTTfy5o21N2eOHqbMkBA9MJiic
+        lnVSH1vCn/5rd+fwRQ/7yLKAdeUcRyxkdVWTUYDnVtQF199MAuXWv4nudjvS3046
+        Y9WpJGiZEi9PqeIxmYYHOZ/jYVF1RpMOyVnZhzRhn4Yy+uzJtUeW45nGyQARAQAB
+        tDZTYW5kcm8tQWxlc3NpbyBHaWVyZW5zIChhcHRseSBrZXkpIDxzYW5kcm9AZ2ll
+        cmVucy5kZT6JAk4EEwEKADgWIQQVSLyKS00miPmw2vfsKeIJDOP9QwUCZN6OPwIb
+        LwULCQgHAgYVCgkICwIEFgIDAQIeAQIXgAAKCRDsKeIJDOP9Q26qEACkbm29cF5f
+        7J95TAMOzNfjwfgEEPTZt9YUQxmYYlO3LGOShx/hogoWGhpw6qXQP0/lRlXcmNWD
+        3J5rN+YmQSIYRP0VvOVJ/XYpgsoS90JwmukbJte4Wu1Goomh1dPv1z/ag4jToSzu
+        faSbwoUa46BmdRBOrOH/w/Ro7U6jLhH9saIivJfexksYeMprXahgoWsFGurl7mt0
+        OaN3C6YSMkoJjpufCTfHKagBRT4ZYRw1JpTF+oap0VZgKtg33pnxVvSKdZJEY9BG
+        su47/eZM0bOCMll1upitF8TQ5DFING6+SRrmT8xAyUOCQBIid/9hBxX5mTYTjKW2
+        ZVteOkCowJwMwx134BffTMWMAMRw27Vxtuuugn6a9yd9pbK95aug62VpbvO8xWM+
+        RocqeuQvh0Ii8kpH+sLjdpceMf1c01cYu97DjtdQ54FGtI4r1kOyh/BO7mI0omoJ
+        hFunhQKKM8q1xUyIs3RvYALuM5VzEWCHwXBYdiNWYDVBC/sNje67A8SXXXjJLhcr
+        9cCpJ5AUmkrLoQvgdewMpuIlmtPRbdv8hkmOUDPkD58AcDirvggXp63IiWlFYQ9C
+        EoDLfUYQ6aJmw1fRI8/QsP3Q50aN6dkZRsDCcpxoNX9YzuU6+o1ha+ZNRpmfJvZg
+        ULP33eq15gJlsGrxo2HZ+f6w4pFFy4juDQ==
+        =MX5x
+        -----END PGP PUBLIC KEY BLOCK-----
+
+# ── Every apt-installable tool, declared natively ───────────────────────────
+# Trim to taste. Deliberately NOT listed here: .NET's ICU/OpenSSL runtime
+# deps, whose package names are release-specific (libicu72 on Debian 12,
+# libicu76 on 13; libssl3 vs libssl3t64) — install-tools.sh resolves those
+# per release instead of guessing here.
 package_update: true
 package_upgrade: false
-
-# Only what's needed to fetch the installer; it handles everything else.
 packages:
+  # base
   - ca-certificates
   - curl
+  - wget
+  - gnupg
+  - lsb-release
+  - git
+  - vim
+  - less
+  - zsh
+  - unzip
+  - rsync
+  - jq
+  - iputils-ping
+  - net-tools
+  # bind9-dnsutils, not the old `dnsutils` name: Debian 13 dropped that
+  # transitional package. It still installs there via the virtual provider,
+  # but naming the real package removes the ambiguity.
+  - bind9-dnsutils
+  - openssh-client
+  # build
+  - build-essential
+  - pkg-config
+  - python3
+  - python3-pip
+  - python3-venv
+  # editors
+  - nano
+  - micro
+  # cli
+  - ripgrep
+  - fd-find
+  - bat
+  - fzf
+  - htop
+  - ncdu
+  - eza
+  - glow
+  # shell
+  - direnv
+  - tmux
+  - bash-completion
+  # auth (devsys-auth encrypts bundles with age)
+  - age
+  # tailnet
+  - tailscale
+  # data services
+  - redis-server
+  - postgresql-client
+  # docker
+  - docker-ce
+  - docker-ce-cli
+  - containerd.io
+  - docker-buildx-plugin
+  - docker-compose-plugin
 
 write_files:
-  # 4. Bootstrap settings. Mode 0600 because TS_AUTHKEY is a credential.
-  #
-  # SECURITY NOTE on TS_AUTHKEY: user-data is readable from the instance
-  # metadata service by anything running on this VM, and many providers keep
-  # it retrievable for the life of the instance. Leave it EMPTY and the VM
-  # installs Tailscale but waits for you to run `sudo tailscale up` yourself.
-  # If you do use one, prefer a short-lived, tagged, single-use key and treat
-  # it as burned once the VM boots.
   - path: /etc/devsys/bootstrap.conf
     permissions: '0600'
     owner: root:root
     content: |
-      # This file is sourced by the bootstrap script, so every value with
-      # spaces MUST be quoted — otherwise the shell reads the extra words as
-      # a command to run.
+      # Sourced by a shell, so every value containing spaces MUST be quoted.
 
-      # Leave empty to install Tailscale without joining.
+      # SECURITY: user-data is readable from the instance metadata service by
+      # anything running on this VM, and many providers keep it retrievable
+      # for the instance's whole life. Leave empty to install Tailscale
+      # without joining. If you set it, use a short-lived, tagged, single-use
+      # key and treat it as burned once the VM boots.
       TS_AUTHKEY=""
 
-      # The account that owns this box. Per-user things (docker group,
-      # login checks, ai-yolo config) are applied to this user.
+      # The account that owns this box — per-user actions (docker group,
+      # login checks, ai-yolo config) apply to this user, not root.
       DEVSYS_USER="dev"
 
-      # Groups to install. See: install-tools.sh --list
-      # ai-yolo is deliberately excluded — it disables AI-CLI approval
-      # prompts for every user. Add it only on a disposable VM.
-      DEVSYS_GROUPS="tailscale base build editors cli shell mise node python auth"
+      # Groups whose NON-APT parts still need installing. The apt-installable
+      # tools are already handled declaratively above; install-tools.sh finds
+      # them present and skips them.
+      DEVSYS_GROUPS="tailscale base build editors cli shell mise node python notes auth"
 
-      # Pin to a commit/tag instead of main for reproducible rebuilds.
+      # Tailnet join settings for the unattended path. The installer prompts
+      # for these interactively; preset here they are used as-is.
+      TS_SSH="true"
+      TS_TAGS=""
+
+      # Pin to a tag/commit for reproducible rebuilds.
       DEVSYS_REF="main"
 
   - path: /usr/local/sbin/devsys-bootstrap.sh
@@ -84,7 +202,13 @@ write_files:
     owner: root:root
     content: |
       #!/usr/bin/env bash
-      # Installed by cloud-init. Safe to re-run: the installer is idempotent.
+      #
+      # Handles only what apt cannot: mise (+ node/python), bun, starship,
+      # lazygit, flyctl, the .NET SDK, the npm-installed CLIs, the system zsh
+      # and bash wiring, shell completions, z and devsys-auth. Everything
+      # apt-installable was already declared in this VM's user-data.
+      #
+      # Safe to re-run — install-tools.sh is idempotent.
       set -euo pipefail
 
       LOG=/var/log/devsys-bootstrap.log
@@ -101,43 +225,40 @@ write_files:
 
       echo "--- fetching install-tools.sh (ref: $DEVSYS_REF)"
       curl -fsSL --retry 5 --retry-delay 3 \
-        "$RAW/install-tools.sh" -o /usr/local/sbin/devsys-install.sh
-      chmod +x /usr/local/sbin/devsys-install.sh
+        "$RAW/install-tools.sh" -o /usr/local/sbin/install-tools.sh
+      chmod +x /usr/local/sbin/install-tools.sh
 
-      # --no-login-check: OAuth flows need a browser and a human. The
+      # -y: no prompts, and skips the hand-over pause.
+      # --no-login-check: OAuth flows need a browser and a human; the
       # developer runs `install-tools.sh --check-logins` after they SSH in.
-      # -y: no prompts, and it also skips the hand-over pause.
-      echo "--- installing groups: $DEVSYS_GROUPS"
+      echo "--- installing non-apt tools for groups: $DEVSYS_GROUPS"
       # shellcheck disable=SC2086
       DEVSYS_USER="$DEVSYS_USER" TS_AUTHKEY="${TS_AUTHKEY:-}" \
-        bash /usr/local/sbin/devsys-install.sh -y --no-login-check $DEVSYS_GROUPS
+        TS_SSH="${TS_SSH:-true}" TS_TAGS="${TS_TAGS:-}" \
+        bash /usr/local/sbin/install-tools.sh -y --no-login-check $DEVSYS_GROUPS
 
-      # zsh exists now, so the account can safely be switched to it.
+      # zsh exists now, so switching the account to it is safe.
       if command -v zsh >/dev/null 2>&1 && id "$DEVSYS_USER" >/dev/null 2>&1; then
         chsh -s "$(command -v zsh)" "$DEVSYS_USER" || true
         echo "--- default shell for $DEVSYS_USER: $(command -v zsh)"
       fi
 
-      # The key has served its purpose; don't leave it on disk. (It may still
-      # be retrievable from instance metadata — see the note in the env file.)
+      # Remove the key from disk. Note this does NOT remove it from the
+      # instance metadata service.
       if [ -n "${TS_AUTHKEY:-}" ]; then
-        sed -i 's/^TS_AUTHKEY=.*/TS_AUTHKEY=/' /etc/devsys/bootstrap.conf
+        sed -i 's/^TS_AUTHKEY=.*/TS_AUTHKEY=""/' /etc/devsys/bootstrap.conf
         echo "--- cleared TS_AUTHKEY from /etc/devsys/bootstrap.conf"
       fi
 
       touch /var/lib/devsys-bootstrap.done
       echo "=== devsys bootstrap finished: $(date -Is) ==="
-
-      if command -v tailscale >/dev/null 2>&1; then
-        tailscale status || true
-      fi
+      command -v tailscale >/dev/null 2>&1 && tailscale status || true
 
 runcmd:
   - [ bash, /usr/local/sbin/devsys-bootstrap.sh ]
 
 final_message: |
   devsys bootstrap complete after $UPTIME seconds.
-  Log:    /var/log/devsys-bootstrap.log
-  Next:   ssh in, then run
-            install-tools.sh --check-logins   # authenticate gh, fly, AI CLIs
-            sudo tailscale up                 # only if TS_AUTHKEY was empty
+  Log:  /var/log/devsys-bootstrap.log
+  Next: install-tools.sh --check-logins   # authenticate gh, fly, AI CLIs
+        sudo tailscale up                 # only if TS_AUTHKEY was empty

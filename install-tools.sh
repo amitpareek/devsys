@@ -52,9 +52,12 @@ FLY_DIR="/opt/fly"
 DOTNET_DIR="/usr/share/dotnet"
 NPM_PREFIX="/usr/local"
 
-# Flags every node joins with. --ssh gives tailnet SSH, --accept-dns uses the
-# tailnet's DNS, --accept-routes picks up subnet routes advertised by others.
-TS_FLAGS=(--ssh=true --accept-dns=true --accept-routes=true)
+# Tailnet join settings. Each is asked interactively, and each can be preset
+# from the environment for unattended runs (cloud-init, CI):
+#   TS_SSH=true|false   TS_TAGS=tag:a,tag:b   TS_AUTHKEY=tskey-auth-...
+TS_SSH="${TS_SSH:-true}"
+TS_TAGS="${TS_TAGS:-}"
+TS_FLAGS=()
 
 DRY_RUN=0
 ASSUME_YES=0
@@ -399,7 +402,7 @@ declare -A GROUP_DESC=(
   [ai]="AI coding CLIs — claude, gemini, codex, opencode"
   [ai-yolo]="auto-approve for the AI CLIs, ALL users — DANGEROUS outside a throwaway VM"
   [data]="redis-server, postgresql-client (psql)"
-  [notes]="obsidian-headless (ob)"
+  [notes]="Obsidian headless Sync client (ob) — obsidian.md/help/sync/headless"
   [tailscale]="tailscale + tailscaled via the official installer"
   [auth]="devsys-auth — move tool logins between your machines as an encrypted bundle"
 )
@@ -425,7 +428,7 @@ declare -A GROUP_DEPS=(
 # tailscale has NO deps on purpose — it must be installable first, before
 # the full base group, so the box can be handed over early.
 
-DEFAULT_GROUPS=(tailscale base build editors cli shell mise node python auth)
+DEFAULT_GROUPS=(tailscale base build editors cli shell mise node python notes auth)
 
 # Never pulled in by `all` — must be named explicitly.
 OPT_IN_ONLY=(ai-yolo)
@@ -507,7 +510,7 @@ install_base() {
     ca-certificates curl wget gnupg lsb-release \
     git vim less zsh bash \
     unzip rsync jq \
-    iputils-ping net-tools dnsutils openssh-client
+    iputils-ping net-tools bind9-dnsutils openssh-client
   write_env_file
   ok "base packages"
 }
@@ -1105,6 +1108,74 @@ install_auth() {
   info "on the others: ${B}devsys-auth import <bundle.age>${R}"
 }
 
+# Turn "prod, dev" or "tag:prod,dev" into "tag:prod,tag:dev". Tailscale
+# requires the tag: prefix and lowercase names, so add and fold rather than
+# rejecting input that is obviously meant to be a tag.
+ts_normalize_tags() {
+  local raw="$1" out="" t
+  local -a parts=()
+  IFS=',' read -ra parts <<<"$raw"
+  for t in "${parts[@]}"; do
+    t="${t//[[:space:]]/}"
+    [ -n "$t" ] || continue
+    t="${t,,}"
+    case "$t" in tag:*) ;; *) t="tag:$t" ;; esac
+    out="${out:+$out,}$t"
+  done
+  printf '%s' "$out"
+}
+
+# Ask the three things that decide how this node joins, in order. Skipped
+# entirely when there is no terminal or --yes was given, in which case the
+# environment defaults stand.
+ts_gather_options() {
+  [ "$ASSUME_YES" = 1 ] && return 0
+  [ -t 0 ] || return 0
+
+  local ans raw
+  printf '\n'
+
+  # 1. Tailscale SSH
+  printf '    %sEnable Tailscale SSH on this node?%s [Y/n] ' "$B" "$R"
+  read -r ans
+  case "$ans" in
+    [nN]|[nN][oO]) TS_SSH=false ;;
+    *)             TS_SSH=true ;;
+  esac
+  info "ssh: $TS_SSH"
+
+  # 2. ACL tags
+  printf '    %sTags, comma-separated%s %s(blank for none; "tag:" added if you omit it)%s: ' \
+    "$B" "$R" "$DIM" "$R"
+  read -r raw
+  TS_TAGS="$(ts_normalize_tags "$raw")"
+  if [ -n "$TS_TAGS" ]; then
+    info "tags: $TS_TAGS"
+    info "${DIM}your ACL must list you as a tagOwner for these${R}"
+  else
+    info "tags: none"
+  fi
+
+  # 3. Auth key. Read visibly on purpose — a silent read breaks paste in many
+  # terminals, the same reason flysetup.sh reads it visibly.
+  if [ -z "${TS_AUTHKEY:-}" ]; then
+    printf '    %sAuth key%s %s(blank to authenticate in a browser)%s: ' \
+      "$B" "$R" "$DIM" "$R"
+    read -r TS_AUTHKEY
+  fi
+  if [ -n "${TS_AUTHKEY:-}" ]; then
+    info "auth key: provided (joining unattended)"
+  else
+    info "auth key: none (browser sign-in)"
+  fi
+}
+
+ts_build_flags() {
+  TS_FLAGS=(--accept-dns=true --accept-routes=true "--ssh=$TS_SSH")
+  [ -n "$TS_TAGS" ] && TS_FLAGS+=("--advertise-tags=$TS_TAGS")
+  return 0
+}
+
 install_tailscale() {
   step "tailscale"
   ensure_prereqs
@@ -1115,58 +1186,49 @@ install_tailscale() {
     ok "tailscale installed"
   fi
 
-  [ "$DRY_RUN" = 1 ] && {
-    info "would enable tailscaled at boot, then:"
+  if [ "$DRY_RUN" = 1 ]; then
+    ts_build_flags
+    info "would ask: enable SSH? / tags / auth key, then:"
     info "  tailscale up --hostname=$(ts_hostname) ${TS_FLAGS[*]}"
     return 0
-  }
+  fi
 
   enable_tailscaled
 
   local hn; hn="$(ts_hostname)"
-  info "tailnet hostname: ${B}$hn${R}   flags: ${TS_FLAGS[*]}"
+  info "tailnet hostname: ${B}$hn${R}"
 
-  # Already on the tailnet: apply the settings idempotently instead of
-  # re-running `up`, which would block on a fresh auth round-trip.
+  ts_gather_options
+  ts_build_flags
+  printf '\n'
+  info "joining as: ${B}$hn${R}  ${DIM}${TS_FLAGS[*]}${R}"
+
+  # Already on the tailnet: apply settings idempotently rather than re-running
+  # `up`, which would force a fresh auth round-trip.
   if tailscale status >/dev/null 2>&1; then
-    ok "already joined"
+    ok "already joined — applying settings"
     run tailscale set --hostname="$hn" "${TS_FLAGS[@]}" \
       || warn "could not apply tailscale settings"
-    ok "settings applied"
-    return 0
-  fi
-
-  # Unattended path: an auth key means no browser round-trip at all.
-  if [ -n "${TS_AUTHKEY:-}" ]; then
-    info "joining with TS_AUTHKEY (unattended)"
-    tailscale up --timeout=120s --auth-key="$TS_AUTHKEY" \
-      --hostname="$hn" "${TS_FLAGS[@]}" || true
     ts_report_state "$hn"
     return 0
   fi
 
-  # No key and no terminal (cloud-init, CI): don't block on a prompt nobody
-  # can answer, and don't run a bare `up` that would sit there until timeout.
-  if [ ! -t 0 ]; then
-    info "not a terminal and no TS_AUTHKEY — leaving the node unjoined."
-    info "join later with: ${B}sudo tailscale up --hostname=$hn ${TS_FLAGS[*]}${R}"
-    return 0
-  fi
-
-  if ! confirm "Run 'tailscale up' now to join the tailnet?"; then
-    info "join later with: ${B}sudo tailscale up --hostname=$hn ${TS_FLAGS[*]}${R}"
-    return 0
-  fi
-
   # --timeout matters: a bare `tailscale up` blocks forever when the tailnet
-  # requires manual device approval, with no clue why. Time out, then report
-  # the actual backend state and what to do about it.
-  tailscale up --timeout=120s --hostname="$hn" "${TS_FLAGS[@]}" || true
+  # requires manual device approval, with no clue why.
+  if [ -n "${TS_AUTHKEY:-}" ]; then
+    tailscale up --timeout=120s --auth-key="$TS_AUTHKEY" \
+      --hostname="$hn" "${TS_FLAGS[@]}" || true
+  elif [ -t 0 ]; then
+    tailscale up --timeout=120s --hostname="$hn" "${TS_FLAGS[@]}" || true
+  else
+    info "no terminal and no TS_AUTHKEY — leaving the node unjoined."
+    info "join later with: ${B}sudo tailscale up --hostname=$hn ${TS_FLAGS[*]}${R}"
+    return 0
+  fi
+
   ts_report_state "$hn"
 }
 
-# VM name = tailnet name. Tailscale wants a DNS label, so fold to lowercase
-# and replace anything else with a hyphen. Override with TS_HOSTNAME.
 ts_hostname() {
   local h="${TS_HOSTNAME:-}"
   if [ -z "$h" ]; then

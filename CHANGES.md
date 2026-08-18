@@ -5,6 +5,33 @@ Dates are UTC. Format follows [Keep a Changelog](https://keepachangelog.com).
 
 ## [Unreleased]
 
+### Changed
+
+- **The `tailscale` group now asks how to join, instead of hard-coding
+  it.** Three prompts in order — enable Tailscale SSH?, comma-separated
+  tags, then the auth key — followed by `tailscale up` and the existing
+  "install the rest?" hand-over pause. Tags are normalised: `prod, Dev`
+  becomes `tag:prod,tag:dev`, since Tailscale requires the prefix and
+  lowercase names. The auth key is read visibly, matching
+  `flysetup.sh`'s reasoning that a silent read breaks paste in many
+  terminals. `TS_SSH`, `TS_TAGS` and `TS_AUTHKEY` preset any of the three
+  from the environment, which is how the cloud-config drives it
+  unattended with no prompts.
+
+- **`notes` (the Obsidian headless Sync client) is now in the default
+  selection** and in the cloud-config's group list — it existed as a
+  group but was never selected by default. Confirmed
+  `obsidian-headless` on npm is the official client: published by
+  Dynalist Inc. from `github.com/obsidianmd/obsidian-headless`,
+  installing the `ob` binary, per
+  <https://obsidian.md/help/sync/headless>.
+
+- **`bind9-dnsutils` replaces `dnsutils`** in the base package set.
+  Debian 13 dropped the `dnsutils` transitional package; it still
+  installs there via the virtual provider, so this was not a failure,
+  but naming the real package removes the ambiguity. Present on Debian
+  12, 13 and Ubuntu alike.
+
 ### Added
 
 - **[`cloud-config.yaml`](./cloud-config.yaml)** — cloud-init user-data
