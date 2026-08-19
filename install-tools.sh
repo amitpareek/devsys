@@ -1126,9 +1126,9 @@ ts_normalize_tags() {
   printf '%s' "$out"
 }
 
-# Ask the three things that decide how this node joins, in order. Skipped
-# entirely when there is no terminal or --yes was given, in which case the
-# environment defaults stand.
+# Ask how this node should join, then how it should behave. Skipped entirely
+# when there is no terminal or --yes was given, in which case the environment
+# defaults stand (TS_AUTHKEY / TS_SSH / TS_TAGS).
 ts_gather_options() {
   [ "$ASSUME_YES" = 1 ] && return 0
   [ -t 0 ] || return 0
@@ -1136,8 +1136,37 @@ ts_gather_options() {
   local ans raw
   printf '\n'
 
-  # 1. Tailscale SSH
-  printf '    %sEnable Tailscale SSH on this node?%s [Y/n] ' "$B" "$R"
+  # 1. Authentication method. A key already in the environment answers this.
+  if [ -n "${TS_AUTHKEY:-}" ]; then
+    info "auth: using TS_AUTHKEY from the environment"
+  else
+    printf '    %sHow should this node join the tailnet?%s\n' "$B" "$R"
+    printf '      %s1%s) login URL — authenticate in a browser %s(default)%s\n' "$B" "$R" "$DIM" "$R"
+    printf '      %s2%s) auth key  — paste a tskey-auth-... %s(no browser needed)%s\n' "$B" "$R" "$DIM" "$R"
+    while :; do
+      printf '    choice [1/2]: '
+      read -r ans
+      case "${ans:-1}" in
+        1) info "auth: login URL (a link will be printed to open in a browser)"
+           break ;;
+        2)
+           # Visible read on purpose — a silent read breaks paste in many
+           # terminals, the same reason flysetup.sh reads it visibly.
+           printf '    %sAuth key%s: ' "$B" "$R"
+           read -r TS_AUTHKEY
+           if [ -z "${TS_AUTHKEY:-}" ]; then
+             warn "no key entered — falling back to the login URL"
+           else
+             info "auth: auth key provided"
+           fi
+           break ;;
+        *) warn "enter 1 or 2" ;;
+      esac
+    done
+  fi
+
+  # 2. Tailscale SSH.
+  printf '\n    %sEnable Tailscale SSH on this node?%s [Y/n] ' "$B" "$R"
   read -r ans
   case "$ans" in
     [nN]|[nN][oO]) TS_SSH=false ;;
@@ -1145,8 +1174,8 @@ ts_gather_options() {
   esac
   info "ssh: $TS_SSH"
 
-  # 2. ACL tags
-  printf '    %sTags, comma-separated%s %s(blank for none; "tag:" added if you omit it)%s: ' \
+  # 3. ACL tags.
+  printf '    %sTags, comma-separated%s %s(blank for none; "tag:" added if omitted)%s: ' \
     "$B" "$R" "$DIM" "$R"
   read -r raw
   TS_TAGS="$(ts_normalize_tags "$raw")"
@@ -1155,19 +1184,6 @@ ts_gather_options() {
     info "${DIM}your ACL must list you as a tagOwner for these${R}"
   else
     info "tags: none"
-  fi
-
-  # 3. Auth key. Read visibly on purpose — a silent read breaks paste in many
-  # terminals, the same reason flysetup.sh reads it visibly.
-  if [ -z "${TS_AUTHKEY:-}" ]; then
-    printf '    %sAuth key%s %s(blank to authenticate in a browser)%s: ' \
-      "$B" "$R" "$DIM" "$R"
-    read -r TS_AUTHKEY
-  fi
-  if [ -n "${TS_AUTHKEY:-}" ]; then
-    info "auth key: provided (joining unattended)"
-  else
-    info "auth key: none (browser sign-in)"
   fi
 }
 
@@ -1189,7 +1205,7 @@ install_tailscale() {
 
   if [ "$DRY_RUN" = 1 ]; then
     ts_build_flags
-    info "would ask: enable SSH? / tags / auth key, then:"
+    info "would ask: login URL or auth key? / enable SSH? / tags, then:"
     info "  tailscale up --hostname=$(ts_hostname) ${TS_FLAGS[*]}"
     return 0
   fi
