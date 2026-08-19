@@ -130,6 +130,14 @@ packages:
   # but naming the real package removes the ambiguity.
   - bind9-dnsutils
   - openssh-client
+  # openssh-server too: Tailscale SSH is served by tailscaled and needs no
+  # sshd, but relying on it alone means a tailscaled failure or a deauthorized
+  # node locks you out with only the provider console left. sshd is the
+  # fallback. Cloud images usually have it already, so this is a no-op there.
+  # NOTE: this opens port 22 to whatever your firewall allows. The dev user
+  # has lock_passwd, so it is key-only, but Debian still ships
+  # PasswordAuthentication yes for other accounts.
+  - openssh-server
   # build
   - build-essential
   - pkg-config

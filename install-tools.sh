@@ -510,7 +510,8 @@ install_base() {
     ca-certificates curl wget gnupg lsb-release \
     git vim less zsh bash \
     unzip rsync jq \
-    iputils-ping net-tools bind9-dnsutils openssh-client
+    iputils-ping net-tools bind9-dnsutils \
+    openssh-client openssh-server
   write_env_file
   ok "base packages"
 }
