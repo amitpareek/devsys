@@ -74,6 +74,40 @@ Dates are UTC. Format follows [Keep a Changelog](https://keepachangelog.com).
   attempted `gh auth login` with no terminal to complete it. It now lists
   the commands to run and attempts nothing when stdin isn't a tty.
 
+- **The macOS `setlocale: LC_CTYPE` warning is now fixed for Tailscale
+  SSH logins too — the base group compiles a locale literally named
+  `UTF-8`.** The sshd `AcceptEnv` edit (below) never covered real
+  logins: Tailscale SSH is a separate server inside tailscaled that
+  hardcodes forwarding `TERM`, `LANG` and `LC_*` from the client
+  (`acceptEnvPair` in ssh/tailssh/incubator.go; the policy file's
+  `acceptEnv` can only add to that list, never remove). So a Mac's
+  `LC_CTYPE=UTF-8` still reached bash, which sets its locale before
+  reading any rc file — too early for env.sh's repair to matter. Since
+  the value can't be kept out, `localedef -i en_US -f UTF-8
+  /usr/lib/locale/UTF-8` makes it valid instead: glibc misses `UTF-8`
+  in locale-archive, falls back to that directory, and setlocale
+  succeeds — for every client and every SSH path. env.sh still
+  normalises the session to C.UTF-8 afterwards. `locales` joins the
+  base apt set (localedef ships in libc-bin, but the en_US source and
+  UTF-8 charmap don't). Verified on a Debian 13 box reached over
+  Tailscale SSH from a Mac: four warnings per interactive bash before,
+  zero after; re-running skips. `DEVSYS_FIX_LOCALE=0` skips it, same as
+  the sshd edit.
+
+- *(backfill — this landed a day earlier without a changelog entry, in
+  breach of the "every change lands in CHANGES.md" rule)* **Installer
+  self-install, locale defaults, and sshd locale forwarding.**
+  `install-tools.sh` now copies itself to `/usr/local/bin` during the
+  base group, so the documented `install-tools.sh --check-logins`
+  actually resolves (and the cloud-config fetches it to `bin` rather
+  than `sbin`, which is root-only on Debian). env.sh sets
+  `LANG=C.UTF-8` when unset and rewrites a literal `LC_CTYPE=UTF-8` to
+  `C.UTF-8`. And the base group comments the locale entries out of
+  sshd's `AcceptEnv` line (keeping `COLORTERM`/`NO_COLOR` for truecolor
+  detection), with a backup at `sshd_config.devsys.bak` and
+  `DEVSYS_FIX_LOCALE=0` to opt out — a no-op on Debian 13, which ships
+  the line already commented.
+
 ### Added
 
 - **The picker is now desired state, and re-running shows what's

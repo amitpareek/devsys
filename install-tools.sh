@@ -520,10 +520,11 @@ install_base() {
     git vim less zsh bash \
     unzip rsync jq \
     iputils-ping net-tools bind9-dnsutils \
-    openssh-client openssh-server
+    openssh-client openssh-server locales
   write_env_file
   install_self
   fix_ssh_locale_env
+  compile_bare_utf8_locale
   create_work_dirs
   ok "base packages"
 }
@@ -565,8 +566,8 @@ EOF
 #   bash: warning: setlocale: LC_CTYPE: cannot change locale (UTF-8)
 # Setting a locale server-side does NOT silence this — bash initialises its
 # locale before reading any rc file, so the bogus value has already been
-# applied. The only fix is to keep it from arriving, and the VM then uses its
-# own C.UTF-8 from env.sh.
+# applied. This keeps it from arriving over OpenSSH; Tailscale SSH can't be
+# stopped from forwarding it, which compile_bare_utf8_locale below handles.
 #
 # Reversible: the original line is left in place, commented, with a marker.
 # Set DEVSYS_FIX_LOCALE=0 to skip this entirely.
@@ -631,6 +632,45 @@ fix_ssh_locale_env() {
     info "no systemd — reload sshd yourself for this to take effect"
   fi
   info "existing sessions keep the old behaviour; reconnect to see it gone"
+}
+
+# Make the literal locale name "UTF-8" valid, for clients sshd can't police.
+#
+# fix_ssh_locale_env above only covers OpenSSH. Tailscale SSH is a separate
+# server inside tailscaled that hardcodes forwarding TERM, LANG and LC_* from
+# the client (acceptEnvPair in ssh/tailssh/incubator.go — the policy file's
+# acceptEnv can only add to that list, never remove). So a Mac's
+# LC_CTYPE=UTF-8 still lands in the session environment, and every
+# interactive bash warns repeatedly before env.sh gets a chance to repair
+# the value.
+#
+# Since the variable can't be kept out, make it valid instead: compile a
+# locale literally named "UTF-8" (en_US data, UTF-8 charmap). glibc misses
+# "UTF-8" in locale-archive, falls back to the /usr/lib/locale/UTF-8
+# directory, setlocale succeeds, and the warning is gone for every client
+# and every SSH path. env.sh still normalises the session to C.UTF-8
+# afterwards.
+#
+# Set DEVSYS_FIX_LOCALE=0 to skip this (same gate as the sshd edit).
+compile_bare_utf8_locale() {
+  [ "${DEVSYS_FIX_LOCALE:-1}" = 1 ] || return 0
+  if [ "$DRY_RUN" = 1 ]; then
+    info "would compile a locale named 'UTF-8' into /usr/lib/locale/UTF-8"
+    return 0
+  fi
+  if [ -e /usr/lib/locale/UTF-8/LC_CTYPE ]; then
+    skip "bare 'UTF-8' locale"
+    return 0
+  fi
+  # localedef itself is in libc-bin (essential); the en_US source and UTF-8
+  # charmap come from the locales package in the base apt set. localedef can
+  # exit non-zero on harmless warnings, so judge success by the artifact.
+  localedef -i en_US -f UTF-8 /usr/lib/locale/UTF-8 2>/dev/null || true
+  if [ -e /usr/lib/locale/UTF-8/LC_CTYPE ]; then
+    ok "locale 'UTF-8' compiled — a client's LC_CTYPE=UTF-8 now resolves"
+  else
+    warn "could not compile the 'UTF-8' locale — is the locales package installed?"
+  fi
 }
 
 # Put the installer on PATH, because every doc and message tells you to run
