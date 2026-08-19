@@ -524,7 +524,38 @@ install_base() {
   write_env_file
   install_self
   fix_ssh_locale_env
+  create_work_dirs
   ok "base packages"
+}
+
+# ~/work for everyone who has a home, plus /etc/skel so future accounts get it.
+# The matching `cd` lives in the shell rc files (see write_shell_rc).
+# Override the name with DEVSYS_WORKDIR.
+create_work_dirs() {
+  local name="${DEVSYS_WORKDIR:-work}"
+  if [ "$DRY_RUN" = 1 ]; then
+    info "would create ~/$name for root, every login account, and /etc/skel"
+    return 0
+  fi
+  local entry user home made=0
+  while IFS= read -r entry; do
+    [ -n "$entry" ] || continue
+    user="${entry%%:*}"; home="${entry#*:}"
+    [ "$home" = /etc/skel ] || [ -d "$home" ] || continue
+    [ -d "$home/$name" ] && continue
+    install -d -m 755 "$home/$name"
+    if [ "$user" != root ]; then
+      chown "$user:$(id -gn "$user" 2>/dev/null || echo "$user")" "$home/$name" 2>/dev/null || true
+    fi
+    made=$((made + 1))
+  done <<EOF
+$(all_homes)
+EOF
+  if [ "$made" -gt 0 ]; then
+    ok "created ~/$name in $made location(s) (incl. /etc/skel for new users)"
+  else
+    skip "\$HOME/$name already exists everywhere"
+  fi
 }
 
 # Stop sshd accepting the client's locale variables.
@@ -775,6 +806,12 @@ unset _f
 # Written separately by the ai-yolo group, so regenerating this file
 # (i.e. re-running the 'shell' group) never drops those aliases.
 [ -f /etc/devsys/yolo.sh ] && . /etc/devsys/yolo.sh
+
+# Land in ~/work on a fresh login. Guarded on $PWD being $HOME so that
+# `cd /var/log && zsh` is not yanked away from where you deliberately are.
+if [ -d "$HOME/work" ] && [ "$PWD" = "$HOME" ]; then
+  cd "$HOME/work" || true
+fi
 :
 RCZSH
   chmod 644 "$RC_FILE"
@@ -804,6 +841,12 @@ unset _f
 
 [ -f /etc/devsys/aliases.sh ] && . /etc/devsys/aliases.sh
 [ -f /etc/devsys/yolo.sh ]    && . /etc/devsys/yolo.sh
+
+# Land in ~/work on a fresh login. Guarded on $PWD being $HOME so that
+# `cd /var/log && bash` is not yanked away from where you deliberately are.
+if [ -d "$HOME/work" ] && [ "$PWD" = "$HOME" ]; then
+  cd "$HOME/work" || true
+fi
 :
 RCBASH
   chmod 644 "$BASH_RC_FILE"
@@ -1108,9 +1151,9 @@ gemini_yolo_json() {
 JSON
 }
 
-# Every home ai-yolo should seed: root, real login accounts, and /etc/skel so
+# Every home the installer touches: root, real login accounts, and /etc/skel so
 # future accounts inherit it. Emits "user:home" pairs.
-yolo_homes() {
+all_homes() {
   printf 'root:/root\n'
   getent passwd \
     | awk -F: '$3 >= 1000 && $3 < 60000 && $6 ~ /^\// { print $1 ":" $6 }'
@@ -1168,7 +1211,7 @@ install_ai_yolo() {
     [ "$home" = /etc/skel ] || [ -d "$home" ] || continue
     write_yolo "$home/.codex/config.toml" "$user" codex_yolo_toml 700
   done <<EOF
-$(yolo_homes)
+$(all_homes)
 EOF
 
   # Aliases are read from /etc by both shells, so they cover all users.
