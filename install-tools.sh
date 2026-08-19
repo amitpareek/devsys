@@ -337,6 +337,15 @@ done
 unset _d
 export PATH
 
+# Locale. C.UTF-8 is built into glibc on Debian 12+/Ubuntu, so nothing needs
+# generating. Only fill in what is missing, so a real locale you chose wins.
+[ -z "\${LANG:-}" ] && export LANG=C.UTF-8
+
+# macOS forwards LC_CTYPE=UTF-8 over ssh, which is not a valid locale name on
+# Linux — it makes every shell print "setlocale: LC_CTYPE: cannot change
+# locale (UTF-8)". Repair the value rather than inheriting it.
+[ "\${LC_CTYPE:-}" = "UTF-8" ] && export LC_CTYPE=C.UTF-8
+
 # Prefer micro, then nano, then vim. Never overrides an EDITOR you set.
 if [ -z "\${EDITOR:-}" ]; then
   for _e in micro nano vim; do
@@ -513,7 +522,101 @@ install_base() {
     iputils-ping net-tools bind9-dnsutils \
     openssh-client openssh-server
   write_env_file
+  install_self
+  fix_ssh_locale_env
   ok "base packages"
+}
+
+# Stop sshd accepting the client's locale variables.
+#
+# macOS forwards LC_CTYPE=UTF-8, which is not a valid locale name on Linux, so
+# every shell greets you with:
+#   bash: warning: setlocale: LC_CTYPE: cannot change locale (UTF-8)
+# Setting a locale server-side does NOT silence this — bash initialises its
+# locale before reading any rc file, so the bogus value has already been
+# applied. The only fix is to keep it from arriving, and the VM then uses its
+# own C.UTF-8 from env.sh.
+#
+# Reversible: the original line is left in place, commented, with a marker.
+# Set DEVSYS_FIX_LOCALE=0 to skip this entirely.
+fix_ssh_locale_env() {
+  local cfg=/etc/ssh/sshd_config
+  [ "${DEVSYS_FIX_LOCALE:-1}" = 1 ] || return 0
+  [ -f "$cfg" ] || return 0
+
+  if [ "$DRY_RUN" = 1 ]; then
+    info "would comment out 'AcceptEnv ... LC_*' in $cfg"
+    return 0
+  fi
+
+  # Already handled, or nothing to do.
+  if grep -q '^# devsys: locale forwarding disabled' "$cfg"; then
+    skip "sshd locale forwarding already disabled"
+    return 0
+  fi
+  if ! grep -qE '^[[:space:]]*AcceptEnv[[:space:]].*LC_' "$cfg"; then
+    skip "sshd does not forward LC_* variables"
+    return 0
+  fi
+
+  # Debian's line is "AcceptEnv LANG LC_* COLORTERM NO_COLOR". Drop only the
+  # locale entries — COLORTERM in particular is worth keeping, or bat and eza
+  # lose truecolor detection.
+  local orig kept=() tok
+  local -a toks=()
+  orig="$(grep -m1 -E '^[[:space:]]*AcceptEnv[[:space:]].*LC_' "$cfg")"
+  read -ra toks <<<"${orig#*AcceptEnv }"
+  for tok in "${toks[@]}"; do
+    case "$tok" in
+      LANG|LANGUAGE|LC_*) ;;      # the offenders
+      *) kept+=("$tok") ;;
+    esac
+  done
+
+  cp -a "$cfg" "$cfg.devsys.bak"
+  local repl='# devsys: locale forwarding disabled — see install-tools.sh'
+  if [ ${#kept[@]} -gt 0 ]; then
+    repl="$repl\\nAcceptEnv ${kept[*]}"
+  fi
+  sed -i -E "s|^([[:space:]]*AcceptEnv[[:space:]].*LC_.*)\$|${repl}\\n#\\1|" "$cfg"
+  if [ ${#kept[@]} -gt 0 ]; then
+    ok "sshd now forwards only: ${kept[*]} (backup: $cfg.devsys.bak)"
+  else
+    ok "sshd no longer forwards LANG/LC_* (backup: $cfg.devsys.bak)"
+  fi
+
+  # Reload only a running unit; never start sshd that was deliberately off.
+  if have systemctl && [ -d /run/systemd/system ]; then
+    local unit=""
+    systemctl list-unit-files 2>/dev/null | grep -q '^ssh\.service'  && unit=ssh
+    [ -z "$unit" ] && systemctl list-unit-files 2>/dev/null | grep -q '^sshd\.service' && unit=sshd
+    if [ -n "$unit" ] && systemctl is-active "$unit" >/dev/null 2>&1; then
+      run systemctl reload "$unit" || warn "could not reload $unit — reload it yourself"
+      ok "$unit reloaded"
+    else
+      info "sshd not running — the change applies when it next starts"
+    fi
+  else
+    info "no systemd — reload sshd yourself for this to take effect"
+  fi
+  info "existing sessions keep the old behaviour; reconnect to see it gone"
+}
+
+# Put the installer on PATH, because every doc and message tells you to run
+# `install-tools.sh --check-logins` — which only works if it is actually
+# installed. /usr/local/bin, not sbin: Debian's /etc/profile puts sbin on
+# root's PATH only, and the login check is meant to be run by each user.
+install_self() {
+  local target="$BIN_DIR/install-tools.sh" src="${BASH_SOURCE[0]}"
+  if [ "$DRY_RUN" = 1 ]; then info "would install self to $target"; return 0; fi
+  # Running from a pipe or process substitution leaves no readable source.
+  [ -f "$src" ] || { info "cannot self-install (no readable source path)"; return 0; }
+  if [ "$(readlink -f "$src")" = "$(readlink -f "$target" 2>/dev/null || true)" ]; then
+    skip "installer already at $target"
+    return 0
+  fi
+  install -m 755 "$src" "$target"
+  ok "installer on PATH as: ${B}install-tools.sh${R}"
 }
 
 install_build() {

@@ -233,8 +233,8 @@ write_files:
 
       echo "--- fetching install-tools.sh (ref: $DEVSYS_REF)"
       curl -fsSL --retry 5 --retry-delay 3 \
-        "$RAW/install-tools.sh" -o /usr/local/sbin/install-tools.sh
-      chmod +x /usr/local/sbin/install-tools.sh
+        "$RAW/install-tools.sh" -o /usr/local/bin/install-tools.sh
+      chmod +x /usr/local/bin/install-tools.sh
 
       # -y: no prompts, and skips the hand-over pause.
       # --no-login-check: OAuth flows need a browser and a human; the
@@ -243,7 +243,7 @@ write_files:
       # shellcheck disable=SC2086
       DEVSYS_USER="$DEVSYS_USER" TS_AUTHKEY="${TS_AUTHKEY:-}" \
         TS_SSH="${TS_SSH:-true}" TS_TAGS="${TS_TAGS:-}" \
-        bash /usr/local/sbin/install-tools.sh -y --no-login-check $DEVSYS_GROUPS
+        bash /usr/local/bin/install-tools.sh -y --no-login-check $DEVSYS_GROUPS
 
       # zsh exists now, so switching the account to it is safe.
       if command -v zsh >/dev/null 2>&1 && id "$DEVSYS_USER" >/dev/null 2>&1; then
